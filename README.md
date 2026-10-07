@@ -61,6 +61,12 @@ A realistic sample lives at `sample-data/amex_leads_10_7_2026.csv` (American Exp
 43 rows, regenerate with `node scripts/generate-amex-sample.mjs`). It covers
 duplicates, mojibake bullets, all email statuses, and five change agents.
 
+Import that one first, then `sample-data/amex_leads_10_7_2026_reexport.csv`
+(regenerate with `node scripts/generate-amex-update.mjs`). It re-exports the same people
+with one promotion, one new work email and one move to another company, plus a new hire,
+so the diff and review screens have real work to do: three rows need your call, one is new,
+and everyone else is left untouched.
+
 ## Where things live
 
 | Path | What |
