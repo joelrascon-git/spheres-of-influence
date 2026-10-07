@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Spheres of Influence
 
-## Getting Started
+A single-user app for a Factory strategic enterprise AE: influence-aware org charts for
+10,000-person enterprises. LinkedIn/Evaboot data in; accounts, orgs, live tenure and a
+curated influence map out.
 
-First, run the development server:
+## Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind 4 + shadcn (Base UI)
+- Supabase (Postgres with RLS on every table, Auth magic links, Storage for avatars)
+- Tiptap for rich text; Lucide icons; Sonner for toasts; Zod for action validation
+- Vitest + PGlite for schema and logic tests
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **Supabase project** — create a project named `Spheres-of-Influence` (any region).
+   If the Factory Supabase connector has write access, Droid can create it and apply
+   the migration for you; otherwise create it in the dashboard.
+2. **Apply the schema** — run `supabase/migrations/20261007000001_core.sql` in the
+   project's SQL editor (or `supabase link --project-ref <ref> && supabase db push`).
+   It creates every table, the boolean-search functions, triggers, RLS policies, and
+   the `avatars`/`uploads` storage buckets.
+3. **Environment** — copy `.env.local.example` to `.env.local` and fill in:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+   | Variable | Value |
+   |---|---|
+   | `NEXT_PUBLIC_SUPABASE_URL` | `https://<ref>.supabase.co` |
+   | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | the project's publishable/anon key |
+   | `ALLOWED_EMAILS` | comma-separated; empty allows any email (dev only) |
 
-## Learn More
+   Later phases: `ANTHROPIC_API_KEY`, `SUMBLE_API_KEY`, `EVABOOT_API_KEY`, `MAPBOX_TOKEN`.
+4. **Run it**:
 
-To learn more about Next.js, take a look at the following resources:
+   ```bash
+   npm install
+   npm run dev     # http://localhost:3000
+   npm test        # unit + PGlite schema tests
+   npm run build   # production build
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+5. **Sign in** — enter your email on the login page; the magic link opens the app.
+   Defaults (fields, style rules, prompts) seed themselves on first login and are
+   editable in Admin without ever being overwritten.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Import pipeline
 
-## Deploy on Vercel
+Bring an Evaboot CSV to `Import → Choose CSV`:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Accounts are found or created from company columns (domain → LinkedIn ID → name),
+  filling only blank columns on existing accounts.
+- Rows match existing contacts by LinkedIn ID, then email; same-name/no-ID rows go to
+  a review queue where you pick the right person or create fresh.
+- Every field change shows as a diff with a checkbox. Blank CSV values never erase
+  stored data; your emails are kept unless you accept the new one. Accepting a company
+  change marks the stored contact "No Longer at Company".
+- Photos download into Supabase Storage; locations geocode via Photon (cached).
+- The export date is read from the file name (e.g. `amex_leads_10_7_2026.csv`), so
+  "2 years, 3 months in role" stays live instead of going stale.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+A realistic sample lives at `sample-data/amex_leads_10_7_2026.csv` (American Express,
+43 rows, regenerate with `node scripts/generate-amex-sample.mjs`). It covers
+duplicates, mojibake bullets, all email statuses, and five change agents.
+
+## Where things live
+
+| Path | What |
+|---|---|
+| `supabase/migrations/` | Schema: tables, search, triggers, RLS, storage |
+| `src/lib/search/` | Boolean query parser (client AST → SQL compiler) |
+| `src/lib/import/` | Evaboot row mapping, matching, diffing |
+| `src/lib/tenure.ts` | Live tenure from import-time start dates |
+| `src/app/(app)/contacts/` | Search, facets, bulk actions, profiles, CSV export |
+| `src/app/(app)/accounts/` | Subsidiaries, orgs, the three whys, notes |
+| `src/app/(app)/import/` | Upload, review, apply |
+| `src/app/(app)/admin/` | Fields, picklists, style rules, prompts + models |
+
+## Phases
+
+1. **Core (done)** — schema, auth, contacts, accounts/orgs, tags, import, admin, home.
+2. Canvas (React Flow) — org charts styled by rules, influence edges.
+3. AI (Claude) + Sumble enrichment + research docs + in-app assistant.
+4. Map (Mapbox), Evaboot API direct import, Vercel deploy.
