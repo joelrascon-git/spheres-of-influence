@@ -219,7 +219,7 @@ export function ContactsView({
               ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" size="sm" render={<a href={exportHref} />}>
+          <Button variant="outline" size="sm" nativeButton={false} render={<a href={exportHref} />}>
             <Download className="size-3.5" /> Export
           </Button>
         </div>
@@ -281,7 +281,7 @@ export function ContactsView({
                     Clear search
                   </Button>
                 ) : (
-                  <Button size="sm" render={<Link href="/import" />}>
+                  <Button size="sm" nativeButton={false} render={<Link href="/import" />}>
                     <Plus className="size-3.5" /> Import contacts
                   </Button>
                 )

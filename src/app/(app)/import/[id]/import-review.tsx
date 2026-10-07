@@ -246,8 +246,8 @@ export function ImportReview({
             {appliedCount} of {items.length} rows touched contacts. {errors.length > 0 && `${errors.length} rows failed.`}
           </p>
           <div className="mt-3 flex justify-center gap-2">
-            <Button size="sm" render={<Link href="/contacts" />}>View contacts</Button>
-            <Button variant="outline" size="sm" render={<Link href="/import" />}>Back to imports</Button>
+            <Button size="sm" nativeButton={false} render={<Link href="/contacts" />}>View contacts</Button>
+            <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/import" />}>Back to imports</Button>
           </div>
         </div>
         {errors.length > 0 && (
@@ -263,7 +263,7 @@ export function ImportReview({
       <div className="mx-auto max-w-3xl px-6 py-10">
         <div className="rounded-lg border p-6 text-center">
           <p className="text-sm font-semibold">This import was discarded</p>
-          <Button variant="outline" size="sm" className="mt-3" render={<Link href="/import" />}>
+          <Button variant="outline" size="sm" className="mt-3" nativeButton={false} render={<Link href="/import" />}>
             Back to imports
           </Button>
         </div>
