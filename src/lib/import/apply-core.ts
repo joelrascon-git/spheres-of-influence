@@ -135,11 +135,14 @@ export async function resolveAccounts(supabase: SupabaseClient, userId: string, 
   const idByKey = new Map<string, string>();
   const creators = plans.filter((p) => !p.match && !p.reuseKey);
   if (creators.length) {
+    // Bulk insert rows must have a uniform shape: PostgREST unions the keys across
+    // all rows, so a key present on one row (out_of_scope on the GBT account) is
+    // NULL on the others and violates not-null. Set it on every row explicitly.
     const values = creators.map((p) => ({
       owner_id: userId,
       ...accountValues(p.company),
       name: p.company.name ?? p.key,
-      ...(p.outOfScope ? { out_of_scope: true } : {}),
+      out_of_scope: p.outOfScope === true,
     }));
     const { data: created, error } = await supabase.from("accounts").insert(values).select("id");
     for (let i = 0; i < (created ?? []).length; i++) {
