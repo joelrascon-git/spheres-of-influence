@@ -26,13 +26,14 @@ import type { ActionResult } from "@/app/(app)/contacts/actions";
 export type { ApplyProgress, EnrichProgress } from "@/lib/import/apply-core";
 
 export async function startImport(formData: FormData): Promise<ActionResult<{ batchId: string }>> {
-  const { supabase } = await requireUser();
+  const { supabase, user } = await requireUser();
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Pick a CSV file." };
   if (file.size > 20 * 1024 * 1024) return { ok: false, error: "File is larger than 20 MB. Split the export." };
 
   const plannedFile = await planImportFile(
     supabase,
+    user.id,
     await file.text(),
     file.name,
     String(formData.get("export_date") ?? ""),
@@ -43,6 +44,7 @@ export async function startImport(formData: FormData): Promise<ActionResult<{ ba
   try {
     ({ batchId } = await createImportBatch(
       supabase,
+      user.id,
       file.name,
       plannedFile.contacts,
       plannedFile.planned,

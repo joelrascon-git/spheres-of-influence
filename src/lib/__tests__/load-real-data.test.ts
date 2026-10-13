@@ -71,7 +71,7 @@ async function latestBatch(supabase: SupabaseClient): Promise<{ id: string; file
 describe.skipIf(!process.env.RUN_REAL_LOAD)("real data load", () => {
   it(
     "imports the AmEx export, migrates research and enriches with AI",
-    { timeout: 3_600_000 },
+    { timeout: 10_800_000 },
     async () => {
       const env = readEnvLocal();
       const url = env.NEXT_PUBLIC_SUPABASE_URL;
@@ -92,10 +92,11 @@ describe.skipIf(!process.env.RUN_REAL_LOAD)("real data load", () => {
       if (phases.includes("import")) {
         const csv = existsSync(process.env.LOAD_CSV ?? DEFAULT_CSV) ? (process.env.LOAD_CSV ?? DEFAULT_CSV) : FALLBACK_CSV;
         log(`import: planning ${csv}`);
-        const planned = await planImportFile(supabase, readFileSync(csv, "utf8"), csv.split("/").pop() ?? "export.csv");
+        const planned = await planImportFile(supabase, userId, readFileSync(csv, "utf8"), csv.split("/").pop() ?? "export.csv");
         if ("error" in planned) throw new Error(planned.error);
         const { batchId: id, stats } = await createImportBatch(
           supabase,
+          userId,
           csv.split("/").pop() ?? "export.csv",
           planned.contacts,
           planned.planned,

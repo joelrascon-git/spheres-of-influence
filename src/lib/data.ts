@@ -112,6 +112,10 @@ export async function logActivity(
   action: string,
   changes: Record<string, unknown> = {},
   source = "manual",
+  ownerId?: string,
 ) {
-  await supabase.from("activity_log").insert({ entity, entity_id: entityId, action, changes, source });
+  // Headless callers (service-role client) must pass ownerId: auth.uid() is null there.
+  await supabase
+    .from("activity_log")
+    .insert({ ...(ownerId ? { owner_id: ownerId } : {}), entity, entity_id: entityId, action, changes, source });
 }

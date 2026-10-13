@@ -120,7 +120,7 @@ function accountValues(company: ImportedCompany) {
  * Banking corporation") fold onto the parent brand, GBT gets its own account
  * tagged out of scope, and nothing else is guessed.
  */
-export async function resolveAccounts(supabase: SupabaseClient, contacts: ImportedContact[]) {
+export async function resolveAccounts(supabase: SupabaseClient, userId: string, contacts: ImportedContact[]) {
   const companies = new Map<string, ImportedCompany>();
   for (const c of contacts) {
     const key = companyKey(c.company);
@@ -136,6 +136,7 @@ export async function resolveAccounts(supabase: SupabaseClient, contacts: Import
   const creators = plans.filter((p) => !p.match && !p.reuseKey);
   if (creators.length) {
     const values = creators.map((p) => ({
+      owner_id: userId,
       ...accountValues(p.company),
       name: p.company.name ?? p.key,
       ...(p.outOfScope ? { out_of_scope: true } : {}),
@@ -146,7 +147,7 @@ export async function resolveAccounts(supabase: SupabaseClient, contacts: Import
       const id = (created ?? [])[i]?.id as string | undefined;
       if (id) {
         idByKey.set(plan.key, id);
-        await logActivity(supabase, "account", id, "create", { source: "import", name: plan.company.name ?? plan.key });
+        await logActivity(supabase, "account", id, "create", { source: "import", name: plan.company.name ?? plan.key }, "manual", userId);
       }
     }
     if (error) console.warn("import: some accounts failed to create", error.message);
@@ -169,7 +170,7 @@ export async function resolveAccounts(supabase: SupabaseClient, contacts: Import
     if (p.outOfScope && !current.out_of_scope) patch.out_of_scope = true;
     if (Object.keys(patch).length) {
       await supabase.from("accounts").update(patch).eq("id", p.match.accountId);
-      await logActivity(supabase, "account", p.match.accountId, "update", { source: "import", ...patch });
+      await logActivity(supabase, "account", p.match.accountId, "update", { source: "import", ...patch }, "manual", userId);
     }
   }
 
@@ -181,6 +182,7 @@ export async function resolveAccounts(supabase: SupabaseClient, contacts: Import
 /** Parses and plans an Evaboot CSV: the shared body of the upload action and the loader. */
 export async function planImportFile(
   supabase: SupabaseClient,
+  userId: string,
   text: string,
   fileName: string,
   explicitDate?: string,
@@ -196,7 +198,7 @@ export async function planImportFile(
   const exportDate = /^\d{4}-\d{2}-\d{2}$/.test(explicit) ? explicit : dateFromFileName(fileName) ?? toIsoDate(new Date());
 
   const contacts = rows.map((r) => mapEvabootRow(r, exportDate));
-  const { accountIdFor } = await resolveAccounts(supabase, contacts);
+  const { accountIdFor } = await resolveAccounts(supabase, userId, contacts);
   const planned = planImport(
     contacts.map((contact) => ({ contact, accountId: accountIdFor(contact) })),
     await fetchExisting(
@@ -213,6 +215,7 @@ export async function planImportFile(
 /** Creates the batch and its planned items; review/error rows start pending. */
 export async function createImportBatch(
   supabase: SupabaseClient,
+  userId: string,
   fileName: string,
   contacts: ImportedContact[],
   planned: ReturnType<typeof planImport>,
@@ -230,6 +233,7 @@ export async function createImportBatch(
   const { data: batch, error } = await supabase
     .from("import_batches")
     .insert({
+      owner_id: userId,
       file_name: fileName,
       export_date: exportDate,
       account_id: mainAccount,
@@ -244,6 +248,7 @@ export async function createImportBatch(
     const contact = contacts[p.rowIndex];
     const payload: ItemPayload = { contact, account_id: accountIdFor(contact) };
     return {
+      owner_id: userId,
       batch_id: batch.id,
       row_index: p.rowIndex,
       linkedin_uid: contact.linkedin_uid,
@@ -443,6 +448,7 @@ export async function applyItem(
   } else {
     // Create (or a review row the seller chose to create fresh).
     const values: Record<string, unknown> = {
+      owner_id: userId,
       first_name: contact.first_name,
       last_name: contact.last_name,
       title: contact.title,
@@ -486,7 +492,7 @@ export async function applyItem(
   await logActivity(supabase, "contact", contactId, item.decision === "merge" ? "import_update" : "import", {
     batch_id: batchId,
     row_index: item.row_index,
-  });
+  }, "manual", userId);
   return contactId;
 }
 
