@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { MODELS } from "@/lib/constants";
+import { runResearchMigration, type ResearchMigrationResult } from "@/lib/research/migrate";
 import type { ActionResult } from "@/app/(app)/contacts/actions";
 
 // ───────── Field definitions & picklists ─────────
@@ -185,4 +186,27 @@ export async function updatePrompt(id: string, patch: z.input<typeof promptPatch
   }
   revalidatePath("/admin");
   return { ok: true };
+}
+
+// ───────── Research data ─────────
+
+/**
+ * Encodes the AmEx research corpus into the knowledge schema. Idempotent:
+ * run before or after a CSV import; existing rows are matched and enriched,
+ * never duplicated.
+ */
+export async function migrateResearchData(): Promise<ActionResult<ResearchMigrationResult>> {
+  const { supabase, user } = await requireUser();
+  const result = await runResearchMigration(supabase, user.id);
+  if (!result.ok) return { ok: false, error: result.error ?? "Research migration failed." };
+  if (result.account_id) {
+    await logActivity(supabase, "account", result.account_id, "research_migration", {
+      ...result.counts,
+      warnings: result.warnings.length,
+    }, "research");
+  }
+  revalidatePath("/admin");
+  revalidatePath("/contacts");
+  revalidatePath("/accounts");
+  return { ok: true, data: result };
 }

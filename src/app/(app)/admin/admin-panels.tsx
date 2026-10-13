@@ -12,12 +12,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { InlineText, SingleSelect } from "@/components/fields";
 import { MODELS } from "@/lib/constants";
 import type { FieldDefinition, FieldType, Prompt, StyleRule } from "@/lib/types";
+import type { ResearchMigrationResult } from "@/lib/research/migrate";
 import { cn } from "@/lib/utils";
 import {
   createFieldDef,
   createStyleRule,
   deleteFieldDef,
   deleteStyleRule,
+  migrateResearchData,
   updateFieldDef,
   updatePrompt,
   updateStyleRule,
@@ -487,6 +489,83 @@ function PromptEditor({ prompt }: { prompt: Prompt }) {
   );
 }
 
+// ───────── Research data ─────────
+
+const MIGRATION_LABELS: Record<string, string> = {
+  accounts_created: "Accounts created",
+  accounts_updated: "Accounts updated",
+  docs_created: "Research docs created",
+  docs_updated: "Research docs updated",
+  orgs_created: "Orgs created",
+  orgs_updated: "Orgs updated",
+  initiatives: "Initiatives",
+  challenges: "Challenges",
+  contacts_created: "Contacts created",
+  contacts_updated: "Contacts enriched",
+  contact_initiative_links: "Contact → initiative links",
+  contact_challenge_links: "Contact → challenge links",
+  org_initiative_links: "Org → initiative links",
+  influence_edges: "Influence edges",
+};
+
+function ResearchDataTab() {
+  const [pending, start] = useTransition();
+  const [result, setResult] = useState<ResearchMigrationResult | null>(null);
+
+  return (
+    <div className="space-y-4">
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        Encodes the American Express research corpus — the entity map, org and domain map,
+        initiatives, challenges and key contacts, plus the Factory product knowledge base and
+        persona rules — into this workspace. Safe to re-run any time: existing accounts and
+        contacts are matched by domain, LinkedIn URL and exact name, so the corpus enriches
+        imported records instead of duplicating them. Research writes persona, seniority,
+        evidence and influence directly as ground truth, upgrading import-time assumptions.
+      </p>
+      <Button
+        size="sm"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const r = await migrateResearchData();
+            if (!r.ok) {
+              toast.error(r.error);
+              return;
+            }
+            if (!r.data) {
+              toast.error("Migration returned no result");
+              return;
+            }
+            setResult(r.data);
+            toast.success("Research data migrated");
+          })
+        }
+      >
+        {pending ? "Migrating…" : "Run research migration"}
+      </Button>
+      {result && (
+        <div className="max-w-2xl rounded-lg border bg-card p-4">
+          <dl className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-sm sm:grid-cols-3">
+            {Object.entries(result.counts).map(([key, value]) => (
+              <div key={key} className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">{MIGRATION_LABELS[key] ?? key}</dt>
+                <dd className="font-medium tabular-nums">{value}</dd>
+              </div>
+            ))}
+          </dl>
+          {result.warnings.length > 0 && (
+            <ul className="mt-3 space-y-1 border-t pt-3 text-xs text-amber-600 dark:text-amber-500">
+              {result.warnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AdminPanels({ fields, rules, prompts }: { fields: FieldDefinition[]; rules: StyleRule[]; prompts: Prompt[] }) {
   const sortedFields = [...fields].sort((a, b) => a.entity.localeCompare(b.entity) || a.sort_order - b.sort_order);
   const sortedRules = [...rules].sort((a, b) => b.priority - a.priority);
@@ -496,6 +575,7 @@ export function AdminPanels({ fields, rules, prompts }: { fields: FieldDefinitio
         <TabsTrigger value="fields">Fields & picklists</TabsTrigger>
         <TabsTrigger value="rules">Style rules</TabsTrigger>
         <TabsTrigger value="prompts">Prompts</TabsTrigger>
+        <TabsTrigger value="research">Research data</TabsTrigger>
       </TabsList>
       <TabsContent value="fields" className={cn("mt-4")}>
         <FieldsTab fields={sortedFields} />
@@ -509,6 +589,9 @@ export function AdminPanels({ fields, rules, prompts }: { fields: FieldDefinitio
             <PromptEditor key={p.id} prompt={p} />
           ))}
         </ul>
+      </TabsContent>
+      <TabsContent value="research" className="mt-4">
+        <ResearchDataTab />
       </TabsContent>
     </Tabs>
   );
