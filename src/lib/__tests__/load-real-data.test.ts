@@ -28,6 +28,7 @@ import {
   type ImportItemRow,
 } from "@/lib/import/apply-core";
 import { runResearchMigration } from "@/lib/research/migrate";
+import { ensureDefaults } from "@/lib/defaults-seed";
 import type { OrgRef } from "@/lib/inference/orgs";
 
 const DEFAULT_CSV = "/Users/joelrascon_macbook_pro_2025/Downloads/Factory/Spheres of Influence/AmEx - Evaboot Export.csv";
@@ -81,6 +82,8 @@ describe.skipIf(!process.env.RUN_REAL_LOAD)("real data load", () => {
 
       const supabase = createClient(url, serviceKey, { auth: { persistSession: false } });
       const userId = await ownerId(supabase);
+      await ensureDefaults(supabase, userId); // seed fields/prompts/personas like a fresh sign-in would
+      log("defaults: ensured (fields, prompts, style rules, personas)");
       const phases = (process.env.LOAD_PHASES ?? "import,apply,research,enrich").split(",").map((s) => s.trim());
       log(`phases: ${phases.join(" → ")} · user ${userId.slice(0, 8)}…`);
 
