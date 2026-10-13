@@ -52,6 +52,7 @@ type ViewRow = { id: string; name: string; query: string; filters: Record<string
 
 const SORTS: [string, string][] = [
   ["default", "Key & seniority"],
+  ["influence", "Influence score"],
   ["name", "Last name"],
   ["updated", "Last updated"],
   ["contacted", "Last contacted"],
@@ -474,7 +475,20 @@ function ContactRow({
           )}
         </TableCell>
       )}
-      {show("seniority") && <TableCell className="text-[13px]">{seniorityLabel(c.seniority) || "—"}</TableCell>}
+      {show("seniority") && (
+        <TableCell className="text-[13px]">
+          <span>{seniorityLabel(c.seniority) || "—"}</span>
+          {(c.seniority_level || c.influence_score != null) && (
+            <span
+              className="block text-[11px] text-muted-foreground"
+              title="Seniority level (L1–L6) and influence score from research"
+            >
+              {c.seniority_level && `${c.seniority_level} · `}
+              {c.influence_score != null && `I${c.influence_score}`}
+            </span>
+          )}
+        </TableCell>
+      )}
       {show("personas") && (
         <TableCell>
           <div className="flex max-w-44 flex-wrap gap-1">

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Building2, Home, LogOut, Settings, Tags, Upload, Users } from "lucide-react";
+import { Building2, Home, ListChecks, LogOut, Settings, Tags, Upload, Users } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { cn } from "@/lib/utils";
 import { signOut } from "@/app/login/actions";
@@ -11,12 +11,13 @@ const NAV = [
   { href: "/", label: "Home", icon: Home, exact: true },
   { href: "/accounts", label: "Accounts", icon: Building2 },
   { href: "/contacts", label: "Contacts", icon: Users },
+  { href: "/inferences", label: "Review", icon: ListChecks, badge: true },
   { href: "/tags", label: "Tags", icon: Tags },
   { href: "/import", label: "Import", icon: Upload },
   { href: "/admin", label: "Admin", icon: Settings },
 ];
 
-export function AppNav({ email }: { email: string }) {
+export function AppNav({ email, pendingCount = 0 }: { email: string; pendingCount?: number }) {
   const pathname = usePathname();
   const router = useRouter();
   return (
@@ -26,7 +27,7 @@ export function AppNav({ email }: { email: string }) {
         <span className="text-sm font-semibold tracking-tight">Spheres of Influence</span>
       </Link>
       <nav className="flex flex-1 flex-col gap-0.5 px-2">
-        {NAV.map(({ href, label, icon: Icon, exact }) => {
+        {NAV.map(({ href, label, icon: Icon, exact, badge }) => {
           const active = exact ? pathname === href : pathname.startsWith(href);
           return (
             <Link
@@ -39,6 +40,11 @@ export function AppNav({ email }: { email: string }) {
             >
               <Icon className={cn("size-4", active && "text-primary")} />
               {label}
+              {badge && pendingCount > 0 && (
+                <span className="ml-auto rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground">
+                  {pendingCount > 99 ? "99+" : pendingCount}
+                </span>
+              )}
             </Link>
           );
         })}

@@ -210,3 +210,28 @@ export async function migrateResearchData(): Promise<ActionResult<ResearchMigrat
   revalidatePath("/accounts");
   return { ok: true, data: result };
 }
+
+// ───────── Persona catalog ─────────
+
+const personaEntryPatch = z
+  .object({
+    name: z.string().min(1).max(200),
+    one_liner: z.string().max(500).nullable(),
+    definition: z.string().max(20000).nullable(),
+    meddpicc: z.string().max(200).nullable(),
+    weight: z.number().int().min(1).max(10),
+    can_veto: z.boolean(),
+    sort_order: z.number().int(),
+  })
+  .partial();
+
+/** Edits a persona catalog entry: the taxonomy behind every persona chip. */
+export async function updatePersonaEntry(id: string, patch: z.input<typeof personaEntryPatch>): Promise<ActionResult> {
+  const { supabase } = await requireUser();
+  const parsed = personaEntryPatch.safeParse(patch);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid persona edit" };
+  const { error } = await supabase.from("persona_catalog").update(parsed.data).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/admin");
+  return { ok: true };
+}

@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import type { Facets } from "@/lib/search/parse";
 import { countFacets } from "@/lib/search/url";
-import { SENIORITY } from "@/lib/constants";
+import { SENIORITY, SENIORITY_LEVELS, PERSONA_STATUS, CHAMPION_FLAG } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 type Opt = { value: string; label: string; hint?: string; color?: string };
@@ -152,10 +152,28 @@ export function FacetBar({ facets, onChange, sources }: { facets: Facets; onChan
         onChange={(v) => set("seniority", v)}
       />
       <FacetPill
+        label="Level"
+        options={SENIORITY_LEVELS.map((l) => ({ value: l.value, label: l.label }))}
+        value={facets.seniorityLevels ?? []}
+        onChange={(v) => set("seniorityLevels", v)}
+      />
+      <FacetPill
         label="Persona"
         options={sources.personas.map((p) => ({ value: p, label: p }))}
         value={facets.personas ?? []}
         onChange={(v) => set("personas", v)}
+      />
+      <FacetPill
+        label="Persona status"
+        options={PERSONA_STATUS.map((p) => ({ value: p.value, label: p.label, hint: p.hint }))}
+        value={facets.personaStatuses ?? []}
+        onChange={(v) => set("personaStatuses", v)}
+      />
+      <FacetPill
+        label="Champion"
+        options={CHAMPION_FLAG.map((c) => ({ value: c.value, label: c.label }))}
+        value={facets.championFlags ?? []}
+        onChange={(v) => set("championFlags", v)}
       />
       <FacetPill
         label="Status"
@@ -180,6 +198,7 @@ export function FacetBar({ facets, onChange, sources }: { facets: Facets; onChan
         onChange={(v) => set("cities", v)}
       />
       <Toggle label="★ Key" active={!!facets.keyOnly} onClick={() => set("keyOnly", !facets.keyOnly || undefined)} />
+      <Toggle label="Can veto" active={!!facets.canVeto} onClick={() => set("canVeto", !facets.canVeto || undefined)} />
       <Toggle label="Has email" active={!!facets.hasEmail} onClick={() => set("hasEmail", !facets.hasEmail || undefined)} />
       <Toggle label="No org" active={!!facets.noOrg} onClick={() => set("noOrg", !facets.noOrg || undefined)} />
       <Toggle

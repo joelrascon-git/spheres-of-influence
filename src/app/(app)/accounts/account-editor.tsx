@@ -18,7 +18,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { InlineText, RichTextField, SingleSelect } from "@/components/fields";
-import { PARENT_RELATIONSHIP } from "@/lib/constants";
+import { ConfidenceBadge, FitBadge } from "@/components/contact-bits";
+import { ENTITY_TYPES, PARENT_RELATIONSHIP } from "@/lib/constants";
 import type { Account, FieldDefinition, Org } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { createAccount, createOrg, deleteAccount, deleteOrg, updateAccount, updateOrg } from "./actions";
@@ -211,6 +212,33 @@ export function StructurePanel({ account, accounts }: { account: Account; accoun
         />
       </div>
       {rel && <p className="pl-30 text-xs text-muted-foreground">{rel.hint}</p>}
+      <div className={rowClass}>
+        <span className={labelClass} title="How this legal entity sits in the corporate tree (from the entity map).">
+          Entity type
+        </span>
+        <SingleSelect
+          className="flex-1"
+          options={ENTITY_TYPES.map((e) => ({ value: e.value, label: e.label }))}
+          value={account.entity_type}
+          placeholder="Unclassified"
+          onChange={(v) => save({ entity_type: (v ?? null) as Account["entity_type"] })}
+        />
+      </div>
+      <div className={rowClass}>
+        <span className={labelClass} title="Out-of-scope entities stay in the tree but are excluded from pursuit.">
+          Scope
+        </span>
+        <button
+          type="button"
+          onClick={() => save({ out_of_scope: !account.out_of_scope })}
+          className={cn(
+            "rounded-full border px-2 py-0.5 text-xs hover:bg-accent",
+            account.out_of_scope ? "border-red-500/40 bg-red-500/10 text-red-400" : "border-green-500/40 text-green-400",
+          )}
+        >
+          {account.out_of_scope ? "Out of scope" : "In scope"}
+        </button>
+      </div>
       <div className={cn(rowClass, "items-start")}>
         <span className={labelClass}>Notes</span>
         <InlineText
@@ -319,7 +347,19 @@ export function OrgsPanel({ account, orgs, contactCounts }: { account: Account; 
                   ⊂ {nameById.get(o.parent_org_id)!.name}
                 </span>
               )}
-              {o.status === "confirmed" && (
+              {o.rank != null && (
+                <span className="shrink-0 text-xs text-muted-foreground" title="Research priority rank">
+                  #{o.rank}
+                </span>
+              )}
+              {o.factory_fit && <FitBadge fit={o.factory_fit} className="shrink-0" />}
+              {o.buying_role && (
+                <span className="max-w-44 shrink-0 truncate text-xs text-muted-foreground" title="Buying role from research">
+                  {o.buying_role}
+                </span>
+              )}
+              {o.confidence && <ConfidenceBadge confidence={o.confidence} className="shrink-0" />}
+              {o.status === "confirmed" && !o.confidence && (
                 <span className="shrink-0 rounded border border-green-500/40 px-1 text-[11px] text-green-400">Confirmed</span>
               )}
               {o.aliases.length > 0 && (

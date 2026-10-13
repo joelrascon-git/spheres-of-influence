@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { InlineText, SingleSelect } from "@/components/fields";
 import { MODELS } from "@/lib/constants";
-import type { FieldDefinition, FieldType, Prompt, StyleRule } from "@/lib/types";
+import type { FieldDefinition, FieldType, PersonaCatalogEntry, Prompt, StyleRule } from "@/lib/types";
 import type { ResearchMigrationResult } from "@/lib/research/migrate";
 import { cn } from "@/lib/utils";
 import {
@@ -21,6 +21,7 @@ import {
   deleteStyleRule,
   migrateResearchData,
   updateFieldDef,
+  updatePersonaEntry,
   updatePrompt,
   updateStyleRule,
 } from "./actions";
@@ -489,6 +490,76 @@ function PromptEditor({ prompt }: { prompt: Prompt }) {
   );
 }
 
+// ───────── Persona catalog ─────────
+
+/** The persona taxonomy: codes, one-liners, weights and vetoes behind every chip. */
+function PersonasTab({ personas }: { personas: PersonaCatalogEntry[] }) {
+  const { run } = useRun();
+  return (
+    <div className="max-w-4xl space-y-3">
+      <p className="text-sm text-muted-foreground">
+        The persona taxonomy used on contacts, in prompts and across the app. Codes (EB, CH, DM…) are the contract;
+        everything else is yours to adapt to this account.
+      </p>
+      <ul className="space-y-2">
+        {personas.map((p) => (
+          <li key={p.id} className="space-y-2 rounded-lg border bg-card p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded bg-accent px-1.5 py-0.5 font-mono text-xs font-semibold">{p.code}</span>
+              <InlineText
+                className="min-w-36 font-medium"
+                value={p.name}
+                onSave={(v) => run(() => updatePersonaEntry(p.id, { name: v }))}
+              />
+              <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground" title="Weight 1–10 in influence scoring">
+                Weight
+                <InlineText
+                  className="w-10"
+                  type="number"
+                  value={String(p.weight)}
+                  onSave={(v) => run(() => updatePersonaEntry(p.id, { weight: v ? Number(v) : p.weight }))}
+                />
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title="Can kill a purchase even without signing it">
+                <Checkbox
+                  checked={p.can_veto}
+                  onCheckedChange={(c) => run(() => updatePersonaEntry(p.id, { can_veto: c === true }))}
+                />
+                Veto
+              </label>
+            </div>
+            <InlineText
+              className="text-sm text-muted-foreground"
+              value={p.one_liner}
+              placeholder="One-liner: how to spot them"
+              onSave={(v) => run(() => updatePersonaEntry(p.id, { one_liner: v || null }))}
+            />
+            <div className="flex items-start gap-2">
+              <span className="w-20 shrink-0 pt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">MEDDICC</span>
+              <InlineText
+                className="flex-1 text-sm"
+                value={p.meddpicc}
+                placeholder="MEDDICC mapping"
+                onSave={(v) => run(() => updatePersonaEntry(p.id, { meddpicc: v || null }))}
+              />
+            </div>
+            <details>
+              <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-muted-foreground">Definition</summary>
+              <InlineText
+                className="mt-1 text-sm text-muted-foreground"
+                multiline
+                value={p.definition}
+                placeholder="Full definition"
+                onSave={(v) => run(() => updatePersonaEntry(p.id, { definition: v || null }))}
+              />
+            </details>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // ───────── Research data ─────────
 
 const MIGRATION_LABELS: Record<string, string> = {
@@ -566,19 +637,23 @@ function ResearchDataTab() {
   );
 }
 
-export function AdminPanels({ fields, rules, prompts }: { fields: FieldDefinition[]; rules: StyleRule[]; prompts: Prompt[] }) {
+export function AdminPanels({ fields, rules, prompts, personas }: { fields: FieldDefinition[]; rules: StyleRule[]; prompts: Prompt[]; personas: PersonaCatalogEntry[] }) {
   const sortedFields = [...fields].sort((a, b) => a.entity.localeCompare(b.entity) || a.sort_order - b.sort_order);
   const sortedRules = [...rules].sort((a, b) => b.priority - a.priority);
   return (
     <Tabs defaultValue="fields" className="px-6 py-4">
       <TabsList>
         <TabsTrigger value="fields">Fields & picklists</TabsTrigger>
+        <TabsTrigger value="personas">Personas</TabsTrigger>
         <TabsTrigger value="rules">Style rules</TabsTrigger>
         <TabsTrigger value="prompts">Prompts</TabsTrigger>
         <TabsTrigger value="research">Research data</TabsTrigger>
       </TabsList>
       <TabsContent value="fields" className={cn("mt-4")}>
         <FieldsTab fields={sortedFields} />
+      </TabsContent>
+      <TabsContent value="personas" className="mt-4">
+        <PersonasTab personas={[...personas].sort((a, b) => a.sort_order - b.sort_order)} />
       </TabsContent>
       <TabsContent value="rules" className="mt-4">
         <StyleRulesTab rules={sortedRules} />

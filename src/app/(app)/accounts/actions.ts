@@ -24,6 +24,10 @@ const accountPatch = z
     parent_account_id: z.uuid().nullable(),
     parent_relationship: z.enum(["independent", "semi_autonomous", "centralized", "unknown"]),
     parent_relationship_notes: nullableText(2000),
+    entity_type: z
+      .enum(["parent", "operating_sub", "regulated_bank", "jv", "acquired_product", "other_sub", "partner", "separate_company"])
+      .nullable(),
+    out_of_scope: z.boolean(),
     why_anything: nullableText(60000),
     why_factory: nullableText(60000),
     why_now: nullableText(60000),

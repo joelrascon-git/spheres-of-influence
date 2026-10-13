@@ -1,6 +1,6 @@
 import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { STATUS } from "@/lib/constants";
+import { ORG_FIT, PERSONA_STATUS, PROGRAM_FIT, RESEARCH_CONFIDENCE, STATUS } from "@/lib/constants";
 
 export function avatarUrl(path: string | null | undefined): string | null {
   if (!path) return null;
@@ -97,6 +97,82 @@ export function TagChip({ name, color, onRemove }: { name: string; color: string
 
 export function KeyStar({ active, className }: { active: boolean; className?: string }) {
   return <Star className={cn("size-4", active ? "fill-primary text-primary" : "text-muted-foreground/50", className)} />;
+}
+
+// ───────────────────────── Second-brain badges ─────────────────────────
+
+/** How grounded a claim is: green for primary sources, red only for never-checked. */
+const RESEARCH_CONFIDENCE_STYLES: Record<string, string> = {
+  confirmed: "border-green-500/40 bg-green-500/10 text-green-400",
+  secondhand: "border-blue-500/40 bg-blue-500/10 text-blue-400",
+  unverified: "border-amber-500/40 bg-amber-500/10 text-amber-500",
+  inference: "border-foreground/20 bg-muted text-muted-foreground",
+};
+
+export function ConfidenceBadge({ confidence, className }: { confidence: string; className?: string }) {
+  const label = RESEARCH_CONFIDENCE.find((c) => c.value === confidence)?.label ?? confidence;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] leading-none",
+        RESEARCH_CONFIDENCE_STYLES[confidence] ?? "border-foreground/20 text-muted-foreground",
+        className,
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+/** Shared color scale for org fit (very_high…low) and program fit (very_strong…weak). */
+const FIT_STYLES: Record<string, string> = {
+  very_high: "border-green-500/40 bg-green-500/10 text-green-400",
+  high: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
+  medium_high: "border-blue-500/40 bg-blue-500/10 text-blue-400",
+  medium_strong: "border-blue-500/40 bg-blue-500/10 text-blue-400",
+  medium: "border-amber-500/40 bg-amber-500/10 text-amber-500",
+  low: "border-red-500/40 bg-red-500/10 text-red-400",
+  weak: "border-red-500/40 bg-red-500/10 text-red-400",
+};
+
+export function FitBadge({ fit, className }: { fit: string | null | undefined; className?: string }) {
+  if (!fit) return null;
+  const label = [...ORG_FIT, ...PROGRAM_FIT].find((f) => f.value === fit)?.label ?? fit;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] leading-none",
+        FIT_STYLES[fit] ?? "border-foreground/20 text-muted-foreground",
+        className,
+      )}
+      title="Factory fit"
+    >
+      {label}
+    </span>
+  );
+}
+
+const PERSONA_STATUS_STYLES: Record<string, string> = {
+  assumed: "border-foreground/20 text-muted-foreground",
+  indicated: "border-blue-500/40 bg-blue-500/10 text-blue-400",
+  validated: "border-green-500/40 bg-green-500/10 text-green-400",
+};
+
+/** How well-attested a contact's personas are: assumed from a title, or evidence-backed. */
+export function PersonaStatusBadge({ status, className }: { status: string; className?: string }) {
+  const def = PERSONA_STATUS.find((p) => p.value === status);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] leading-none",
+        PERSONA_STATUS_STYLES[status] ?? "border-foreground/20 text-muted-foreground",
+        className,
+      )}
+      title={def?.hint}
+    >
+      Persona {def?.label.toLowerCase() ?? status}
+    </span>
+  );
 }
 
 export const isGone = (statuses: string[]) => statuses.includes(STATUS.gone);

@@ -6,6 +6,9 @@ const LIST_KEYS = {
   account: "accountIds",
   org: "orgIds",
   sen: "seniority",
+  lvl: "seniorityLevels",
+  pstat: "personaStatuses",
+  champ: "championFlags",
   persona: "personas",
   status: "statuses",
   xstatus: "excludeStatuses",
@@ -16,6 +19,7 @@ const LIST_KEYS = {
 
 const FLAG_KEYS = {
   key: "keyOnly",
+  veto: "canVeto",
   email: "hasEmail",
   mgr: "hasManager",
   noorg: "noOrg",

@@ -7,7 +7,7 @@ import { ArrowLeft, ArrowRight, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ContactAvatar, KeyStar, StatusBadge, TagChip, isDnc, isGone } from "@/components/contact-bits";
+import { ContactAvatar, ConfidenceBadge, FitBadge, KeyStar, StatusBadge, TagChip, isDnc, isGone } from "@/components/contact-bits";
 import { RichTextView } from "@/components/rich-text";
 import {
   DateField,
@@ -18,10 +18,12 @@ import {
   RichTextField,
   SingleSelect,
 } from "@/components/fields";
-import { CONFIDENCE, SENIORITY } from "@/lib/constants";
+import { CONFIDENCE, SENIORITY, SENIORITY_LEVELS, PERSONA_STATUS, CHAMPION_FLAG, ENGAGE_STAGES } from "@/lib/constants";
+import { describeInferenceValue } from "@/lib/inference/apply";
+import { InferenceCard } from "@/app/(app)/inferences/inference-card";
 import type { ContactRef } from "@/lib/data";
 import type { Place } from "@/lib/geocode";
-import type { Contact, FieldDefinition, Note, Tag } from "@/lib/types";
+import type { Contact, FieldDefinition, Inference, Note, Tag } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   addNote,
@@ -711,6 +713,261 @@ export function CustomFieldsPanel({ contact, fields }: { contact: Contact; field
           </div>
         );
       })}
+    </section>
+  );
+}
+
+// ───────── Second brain: research profile, evidence, programs, proposals ─────────
+
+/** The researched persona fields: written by research, imports and reviewed proposals. */
+export function ResearchPanel({ contact }: { contact: Contact }) {
+  const { save } = useSave(contact.id);
+  return (
+    <section className="space-y-2.5 rounded-lg border bg-card p-4">
+      <h2 className="text-sm font-semibold">Research profile</h2>
+      <div className={rowClass}>
+        <span className={labelClass} title="The L1–L6 ladder from the persona knowledge base; finer than seniority.">
+          Level
+        </span>
+        <SingleSelect
+          className="flex-1"
+          options={SENIORITY_LEVELS.map((l) => ({ value: l.value, label: l.label }))}
+          value={contact.seniority_level}
+          placeholder="Not set"
+          onChange={(v) => save({ seniority_level: (v ?? null) as Contact["seniority_level"] })}
+        />
+      </div>
+      <div className={rowClass}>
+        <span className={labelClass} title="How well-attested the personas are.">
+          Persona status
+        </span>
+        <SingleSelect
+          className="flex-1"
+          options={PERSONA_STATUS.map((p) => ({ value: p.value, label: p.label }))}
+          value={contact.persona_status}
+          placeholder="Not set"
+          onChange={(v) => save({ persona_status: (v ?? null) as Contact["persona_status"] })}
+        />
+      </div>
+      <div className={rowClass}>
+        <span className={labelClass} title="Champions never come from titles: only from advocacy evidence.">
+          Champion
+        </span>
+        <SingleSelect
+          className="flex-1"
+          options={CHAMPION_FLAG.map((c) => ({ value: c.value, label: c.label }))}
+          value={contact.champion_flag}
+          placeholder="Not set"
+          onChange={(v) => save({ champion_flag: (v ?? "none") as Contact["champion_flag"] })}
+          allowClear={false}
+        />
+      </div>
+      <div className={rowClass}>
+        <span className={labelClass} title="Someone who can kill a purchase even without signing it.">
+          Can veto
+        </span>
+        <SingleSelect
+          className="flex-1"
+          options={[
+            { value: "unknown", label: "Unknown" },
+            { value: "yes", label: "Yes" },
+            { value: "no", label: "No" },
+          ]}
+          value={contact.can_veto == null ? "unknown" : contact.can_veto ? "yes" : "no"}
+          onChange={(v) => save({ can_veto: v === "yes" ? true : v === "no" ? false : null })}
+          allowClear={false}
+        />
+      </div>
+      <div className={rowClass}>
+        <span className={labelClass}>Buying role</span>
+        <InlineText
+          className="flex-1"
+          value={contact.buying_role}
+          placeholder="e.g. Technical evaluator"
+          onSave={(v) => save({ buying_role: v || null })}
+        />
+      </div>
+      <div className={rowClass}>
+        <span className={labelClass}>Engage stage</span>
+        <SingleSelect
+          className="flex-1"
+          options={ENGAGE_STAGES.map((s) => ({ value: s, label: s }))}
+          value={contact.engage_stage}
+          placeholder="Not engaged"
+          onChange={(v) => save({ engage_stage: (v ?? null) as Contact["engage_stage"] })}
+        />
+      </div>
+      <div className={cn(rowClass, "items-center")}>
+        <span className={labelClass} title="Research-weighted influence: level, ownership, reporting-line proximity to an EB, evidence.">
+          Influence
+        </span>
+        {contact.influence_score != null ? (
+          <>
+            <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted" title={`Influence score ${contact.influence_score}/100`}>
+              <span className="block h-full rounded-full bg-primary" style={{ width: `${contact.influence_score}%` }} />
+            </span>
+            <span className="tabular-nums text-xs text-muted-foreground">{contact.influence_score}/100</span>
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground">Not scored yet</span>
+        )}
+        <InlineText
+          className="ml-auto w-16"
+          value={contact.influence_score == null ? null : String(contact.influence_score)}
+          type="number"
+          placeholder="—"
+          onSave={(v) => save({ influence_score: v ? Number(v) : null })}
+        />
+      </div>
+    </section>
+  );
+}
+
+/** Cited claims with their sources and confidences, plus known gaps. */
+export function EvidencePanel({ contact }: { contact: Contact }) {
+  return (
+    <section className="space-y-2.5 rounded-lg border bg-card p-4">
+      <h2 className="text-sm font-semibold">Evidence ({contact.evidence.length})</h2>
+      {contact.evidence.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          No cited evidence yet — research and reviewed AI proposals record claims here with their sources.
+        </p>
+      )}
+      <ul className="space-y-2">
+        {contact.evidence.map((e, i) => (
+          <li key={i} className="flex items-start gap-1.5 text-sm">
+            <ConfidenceBadge confidence={e.confidence} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1">{e.claim}</span>
+            {e.source_url && (
+              <a
+                href={e.source_url}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 text-xs text-primary hover:underline"
+                title={e.source_url}
+              >
+                {e.source_label ?? "source"}
+              </a>
+            )}
+          </li>
+        ))}
+      </ul>
+      {contact.gaps.length > 0 && (
+        <div className="space-y-1 border-t pt-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Gaps</p>
+          <ul className="space-y-0.5 text-xs text-amber-600 dark:text-amber-500">
+            {contact.gaps.map((g, i) => (
+              <li key={i}>— {g}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export type LinkedProgram = {
+  id: string;
+  code: string;
+  name: string;
+  fit: string | null;
+  strength: string;
+  note: string | null;
+};
+
+/** The initiatives and challenges this person is tied to, with Factory fit. */
+export function ProgramsPanel({
+  contactId,
+  accountId,
+  initiatives,
+  challenges,
+}: {
+  contactId: string;
+  accountId: string | null;
+  initiatives: LinkedProgram[];
+  challenges: LinkedProgram[];
+}) {
+  if (initiatives.length === 0 && challenges.length === 0) return null;
+  const href = accountId ? `/accounts/${accountId}` : null;
+  return (
+    <section className="space-y-2 rounded-lg border bg-card p-4" key={contactId}>
+      <h2 className="text-sm font-semibold">Programs</h2>
+      {initiatives.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Initiatives</p>
+          <ul className="flex flex-wrap gap-1.5">
+            {initiatives.map((p) => (
+              <li key={p.id} className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs">
+                {href ? (
+                  <a href={href} className="font-medium hover:underline">
+                    {p.code} · {p.name}
+                  </a>
+                ) : (
+                  <span className="font-medium">
+                    {p.code} · {p.name}
+                  </span>
+                )}
+                <FitBadge fit={p.fit} />
+                {p.strength === "inferred" && <span className="text-muted-foreground" title="Inferred link">~</span>}
+                {p.note && <span className="text-muted-foreground" title={p.note}>·</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {challenges.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Challenges</p>
+          <ul className="flex flex-wrap gap-1.5">
+            {challenges.map((p) => (
+              <li key={p.id} className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs">
+                {href ? (
+                  <a href={href} className="font-medium hover:underline">
+                    {p.code} · {p.name}
+                  </a>
+                ) : (
+                  <span className="font-medium">
+                    {p.code} · {p.name}
+                  </span>
+                )}
+                <FitBadge fit={p.fit} />
+                {p.strength === "inferred" && <span className="text-muted-foreground" title="Inferred link">~</span>}
+                {p.note && <span className="text-muted-foreground" title={p.note}>·</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Pending AI and import proposals for this person, accepted or rejected in place. */
+export function ProposalsPanel({ inferences }: { inferences: Inference[] }) {
+  if (inferences.length === 0) return null;
+  return (
+    <section className="space-y-2 rounded-lg border bg-card p-4">
+      <h2 className="text-sm font-semibold">Pending proposals ({inferences.length})</h2>
+      <p className="text-xs text-muted-foreground">Accepting writes the change to this profile.</p>
+      <ul className="space-y-2">
+        {inferences.map((inf) => (
+          <InferenceCard
+            key={inf.id}
+            className="border-0 bg-muted/40 p-3"
+            data={{
+              id: inf.id,
+              kind: inf.kind,
+              description: describeInferenceValue(inf.kind, inf.value),
+              confidence: inf.confidence,
+              source: inf.source,
+              subjectLabel: null,
+              subjectHref: null,
+              rationale: inf.rationale,
+              evidence: inf.evidence,
+            }}
+          />
+        ))}
+      </ul>
     </section>
   );
 }

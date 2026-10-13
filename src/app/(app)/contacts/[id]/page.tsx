@@ -3,10 +3,10 @@ import { notFound } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { ArrowLeft, ExternalLink, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { ContactAvatar, KeyStar, PersonaBadge, StatusBadge } from "@/components/contact-bits";
+import { ContactAvatar, KeyStar, PersonaBadge, PersonaStatusBadge, StatusBadge } from "@/components/contact-bits";
 import { requireUser } from "@/lib/auth";
 import { integrations } from "@/lib/env";
-import { DEFAULT_STATUSES, PERSONA_CODES, seniorityLabel } from "@/lib/constants";
+import { CHAMPION_FLAG, DEFAULT_STATUSES, PERSONA_CODES, seniorityLabel } from "@/lib/constants";
 import {
   getContact,
   getContactRelations,
@@ -18,17 +18,23 @@ import {
   type ContactRef,
 } from "@/lib/data";
 import { tenure } from "@/lib/tenure";
+import type { Inference } from "@/lib/types";
 import {
   AiBriefPanel,
   BasicsPanel,
   CustomFieldsPanel,
   DangerPanel,
+  EvidencePanel,
   InfluencePanel,
   NotesPanel,
   PersonalDetailsPanel,
+  ProgramsPanel,
+  ProposalsPanel,
   ReportsToPanel,
+  ResearchPanel,
   TagsPanel,
   type InfluenceEdge,
+  type LinkedProgram,
 } from "./contact-panels";
 
 export default async function ContactPage({ params }: PageProps<"/contacts/[id]">) {
@@ -37,7 +43,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
   const contact = await getContact(supabase, id);
   if (!contact) notFound();
 
-  const [relations, accounts, orgs, tags, fields, refs, history] = await Promise.all([
+  const [relations, accounts, orgs, tags, fields, refs, history, initiativeLinks, challengeLinks, proposals] = await Promise.all([
     getContactRelations(supabase, id),
     listAccounts(supabase),
     listOrgs(supabase),
@@ -51,7 +57,56 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
       .eq("entity_id", id)
       .order("created_at", { ascending: false })
       .limit(10),
+    supabase
+      .from("contact_initiatives")
+      .select("strength, note, initiatives(id, code, name, factory_fit)")
+      .eq("contact_id", id),
+    supabase
+      .from("contact_challenges")
+      .select("strength, note, challenges(id, code, name, factory_fit)")
+      .eq("contact_id", id),
+    supabase
+      .from("inferences")
+      .select("*")
+      .eq("subject_id", id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false }),
   ]);
+
+  // PostgREST returns to-one embeds as objects; the client's inferred type may say array.
+  const one = <T,>(x: T[] | T | null | undefined): T | null => (Array.isArray(x) ? (x[0] ?? null) : (x ?? null));
+
+  const linkedInitiatives: LinkedProgram[] = ((initiativeLinks.data ?? []) as unknown as {
+    strength: string;
+    note: string | null;
+    initiatives: { id: string; code: string; name: string; factory_fit: string | null }[] | { id: string; code: string; name: string; factory_fit: string | null } | null;
+  }[])
+    .map((l) => ({ l, p: one(l.initiatives) }))
+    .filter(({ p }) => !!p)
+    .map(({ l, p }) => ({
+      id: p!.id,
+      code: p!.code,
+      name: p!.name,
+      fit: p!.factory_fit,
+      strength: l.strength,
+      note: l.note,
+    }));
+  const linkedChallenges: LinkedProgram[] = ((challengeLinks.data ?? []) as unknown as {
+    strength: string;
+    note: string | null;
+    challenges: { id: string; code: string; name: string; factory_fit: string | null }[] | { id: string; code: string; name: string; factory_fit: string | null } | null;
+  }[])
+    .map((l) => ({ l, p: one(l.challenges) }))
+    .filter(({ p }) => !!p)
+    .map(({ l, p }) => ({
+      id: p!.id,
+      code: p!.code,
+      name: p!.name,
+      fit: p!.factory_fit,
+      strength: l.strength,
+      note: l.note,
+    }));
+  const pendingProposals = (proposals.data ?? []) as Inference[];
 
   // Names for influence edges and the manager, which may cross account boundaries.
   const edgeContactIds = [
@@ -154,6 +209,23 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
           {contact.personas.map((p) => (
             <PersonaBadge key={p} persona={p} />
           ))}
+          {contact.persona_status && <PersonaStatusBadge status={contact.persona_status} />}
+          {contact.champion_flag !== "none" && (
+            <span
+              className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-500"
+              title="Champion evidence: published work, owned initiative, or stated advocacy — never a title."
+            >
+              Champion · {CHAMPION_FLAG.find((c) => c.value === contact.champion_flag)?.label.toLowerCase()}
+            </span>
+          )}
+          {contact.can_veto && (
+            <span
+              className="inline-flex items-center rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-400"
+              title="Can kill a purchase even without signing it."
+            >
+              Holds veto
+            </span>
+          )}
           <span className="text-xs text-muted-foreground">{t.label || "Tenure unknown"}</span>
           {t.isChangeAgent && (
             <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px] text-primary" title="In role under a year after 3+ years at the company — often the person who drives change.">
@@ -172,8 +244,16 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
             personasOptions={personasOptions}
             statusOptions={statusOptions}
           />
+          <ResearchPanel contact={contact} />
           <ReportsToPanel contact={contact} directReports={relations.directReports} candidates={refs} />
           <InfluencePanel contact={contact} candidates={refs} influenced={influenced} influencedBy={influencedBy} />
+          <EvidencePanel contact={contact} />
+          <ProgramsPanel
+            contactId={contact.id}
+            accountId={contact.account_id}
+            initiatives={linkedInitiatives}
+            challenges={linkedChallenges}
+          />
 
           {(contact.headline || contact.summary || contact.job_description) && (
             <section className="space-y-3 rounded-lg border bg-card p-4">
@@ -208,6 +288,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
 
         <div className="space-y-4">
           <AiBriefPanel contactId={contact.id} enabled={integrations.anthropic()} />
+          <ProposalsPanel inferences={pendingProposals} />
           <TagsPanel contactId={contact.id} tagIds={relations.tagIds} tags={tags} />
           <PersonalDetailsPanel contact={contact} />
           <CustomFieldsPanel contact={contact} fields={customFields} />

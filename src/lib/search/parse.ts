@@ -256,6 +256,9 @@ export type Facets = {
   accountIds?: string[];
   orgIds?: string[];
   seniority?: string[];
+  seniorityLevels?: string[];
+  personaStatuses?: string[];
+  championFlags?: string[];
   personas?: string[];
   statuses?: string[];
   excludeStatuses?: string[];
@@ -263,6 +266,7 @@ export type Facets = {
   excludeTagIds?: string[];
   cities?: string[];
   keyOnly?: boolean;
+  canVeto?: boolean;
   hasEmail?: boolean;
   hasManager?: boolean;
   noOrg?: boolean;
@@ -281,6 +285,9 @@ export function buildFilter(query: string, facets: Facets = {}): FilterNode {
   inF("account_id", facets.accountIds);
   inF("org_id", facets.orgIds);
   inF("seniority", facets.seniority);
+  inF("seniority_level", facets.seniorityLevels);
+  inF("persona_status", facets.personaStatuses);
+  inF("champion_flag", facets.championFlags);
   inF("personas", facets.personas);
   inF("statuses", facets.statuses);
   inF("tag_id", facets.tagIds);
@@ -288,6 +295,7 @@ export function buildFilter(query: string, facets: Facets = {}): FilterNode {
   if (facets.excludeStatuses?.length) parts.push({ t: "not", c: { t: "in", f: "statuses", v: facets.excludeStatuses } });
   if (facets.excludeTagIds?.length) parts.push({ t: "not", c: { t: "in", f: "tag_id", v: facets.excludeTagIds } });
   if (facets.keyOnly) parts.push({ t: "bool", f: "is_key", v: true });
+  if (facets.canVeto) parts.push({ t: "bool", f: "can_veto", v: true });
   if (facets.hasEmail) parts.push({ t: "bool", f: "has_email", v: true });
   if (facets.hasManager) parts.push({ t: "bool", f: "has_manager", v: true });
   if (facets.noOrg) parts.push({ t: "bool", f: "has_org", v: false });

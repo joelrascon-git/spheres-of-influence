@@ -96,6 +96,24 @@ describe("buildFilter", () => {
       ],
     });
   });
+
+  it("builds the second-brain facet filters", () => {
+    const f = buildFilter("", {
+      seniorityLevels: ["L1", "L2"],
+      personaStatuses: ["indicated"],
+      championFlags: ["potential"],
+      canVeto: true,
+    });
+    expect(f).toEqual({
+      t: "and",
+      c: [
+        { t: "in", f: "seniority_level", v: ["L1", "L2"] },
+        { t: "in", f: "persona_status", v: ["indicated"] },
+        { t: "in", f: "champion_flag", v: ["potential"] },
+        { t: "bool", f: "can_veto", v: true },
+      ],
+    });
+  });
 });
 
 describe("highlightTerms", () => {
