@@ -294,3 +294,41 @@ describe("knowledge schema", () => {
       expect(new Date(after.updated_at).getTime()).toBeGreaterThan(new Date(before.updated_at).getTime());
     }));
 });
+
+describe("import chunks", () => {
+  const BATCH = "70000000-0000-0000-0000-000000000001";
+  const ITEM_A = "70000000-0000-0000-0000-00000000000a";
+  const ITEM_B = "70000000-0000-0000-0000-00000000000b";
+
+  beforeAll(async () =>
+    as(USER_A, async () => {
+      await db.exec(`
+        insert into public.import_batches (id, file_name, status) values ('${BATCH}', 'amex.csv', 'applying');
+        insert into public.import_items (id, batch_id, row_index, action, payload, decision) values
+          ('${ITEM_A}', '${BATCH}', 0, 'create', '{}'::jsonb, 'accept'),
+          ('${ITEM_B}', '${BATCH}', 1, 'create', '{}'::jsonb, 'accept');
+      `);
+    }),
+  );
+
+  it("accepts the applying status", () =>
+    as(USER_A, async () => {
+      const res = await db.query<{ status: string }>(`select status from public.import_batches where id = '${BATCH}'`);
+      expect(res.rows).toEqual([{ status: "applying" }]);
+    }));
+
+  it("marks processed rows so an interrupted apply resumes", () =>
+    as(USER_A, async () => {
+      await db.exec(`update public.import_items set processed_at = now() where id = '${ITEM_A}'`);
+      const pending = await db.query<{ id: string }>(
+        `select id from public.import_items where batch_id = '${BATCH}' and processed_at is null order by row_index`,
+      );
+      expect(pending.rows).toEqual([{ id: ITEM_B }]);
+    }));
+
+  it("keeps other owners' import rows invisible", () =>
+    as(USER_B, async () => {
+      const rows = await db.query(`select id from public.import_items`);
+      expect(rows.rows).toEqual([]);
+    }));
+});

@@ -4,13 +4,21 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { AlertTriangle, ArrowRight, Check, Loader2, Plus, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronLeft, ChevronRight, Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SingleSelect } from "@/components/fields";
 import { cn } from "@/lib/utils";
-import { applyImport, chooseMergeTarget, discardImport, setDiffAccept, setItemDecision } from "../actions";
+import {
+  applyImportChunk,
+  chooseMergeTarget,
+  discardImport,
+  setBulkDecision,
+  setDiffAccept,
+  setItemDecision,
+  type ApplyProgress,
+} from "../actions";
 
 export type ReviewDiff = {
   field: string;
@@ -194,20 +202,27 @@ function ItemCard({ item }: { item: ReviewItem }) {
   );
 }
 
-function Section({ title, items, hint }: { title: string; items: ReviewItem[]; hint?: string }) {
-  if (items.length === 0) return null;
+function BulkBar({ batchId, group, count }: { batchId: string; group: string; count: number }) {
+  const [pending, start] = useTransition();
+  const run = (decision: "accept" | "skip", verb: string) =>
+    start(async () => {
+      const r = await setBulkDecision(batchId, group, decision);
+      if (!r.ok) toast.error(r.error);
+      else if (!r.data) toast.error("No rows updated.");
+      else toast.success(`${r.data.updated} rows ${verb}.`);
+    });
+  if (group === "error" || count === 0) return null;
   return (
-    <section>
-      <h2 className="mb-2 text-sm font-semibold">
-        {title} <span className="font-normal text-muted-foreground">({items.length})</span>
-      </h2>
-      {hint && <p className="mb-2 text-xs text-muted-foreground">{hint}</p>}
-      <ul className="space-y-2">
-        {items.map((item) => (
-          <ItemCard key={item.id} item={item} />
-        ))}
-      </ul>
-    </section>
+    <div className="flex shrink-0 items-center gap-2">
+      {group !== "skipped" && (
+        <Button variant="outline" size="sm" disabled={pending} onClick={() => run("skip", "excluded")}>
+          <X className="size-3.5" /> Skip all
+        </Button>
+      )}
+      <Button variant="outline" size="sm" disabled={pending} onClick={() => run("accept", "included")}>
+        <Check className="size-3.5" /> {group === "review" ? "Create all new" : "Include all"}
+      </Button>
+    </div>
   );
 }
 
@@ -217,43 +232,86 @@ export function ImportReview({
   exportDate,
   status,
   items,
+  tabs,
+  activeGroup,
+  hint,
+  page,
+  pageCount,
+  totals,
+  applied,
 }: {
   batchId: string;
   fileName: string;
   exportDate: string;
   status: string;
   items: ReviewItem[];
+  tabs: { key: string; label: string; count: number }[];
+  activeGroup: string;
+  hint?: string;
+  page: number;
+  pageCount: number;
+  totals: { rows: number; pendingReview: number; toApply: number };
+  applied?: { touched: number; errors: number };
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
-  const [showSkipped, setShowSkipped] = useState(false);
+  const [, start] = useTransition();
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<ApplyProgress | null>(null);
 
-  const needsReview = items.filter((i) => i.action === "review" && i.decision === "pending");
-  const updates = items.filter((i) => i.decision === "merge" || (i.action === "update" && i.decision !== "skip"));
-  const creates = items.filter((i) => i.action === "create" && i.decision !== "skip");
-  const unchanged = items.filter((i) => i.action === "unchanged" && i.decision !== "skip");
-  const errors = items.filter((i) => i.action === "error");
-  const skipped = items.filter((i) => i.decision === "skip");
-  const toApply = updates.length + creates.length + unchanged.length;
+  /** Drive the chunked apply from the browser so 600+ row imports never hit a server timeout. */
+  async function runApply() {
+    setRunning(true);
+    try {
+      for (let guard = 0; guard < 2000; guard++) {
+        const r = await applyImportChunk(batchId);
+        if (!r.ok) {
+          toast.error(r.error);
+          return;
+        }
+        if (!r.data) {
+          toast.error("Apply failed.");
+          return;
+        }
+        setProgress(r.data);
+        if (r.data.done) {
+          const t = r.data.errors > 0 ? toast.warning : toast.success;
+          t(`Import applied: ${r.data.applied} rows touched${r.data.errors > 0 ? `, ${r.data.errors} failed` : ""}.`);
+          router.refresh();
+          return;
+        }
+      }
+      toast.error("Apply stopped early. Reopen this page and resume.");
+    } finally {
+      setRunning(false);
+    }
+  }
 
   if (status === "applied") {
-    const appliedCount = items.filter((i) => i.appliedContactId).length;
     return (
       <div className="mx-auto max-w-3xl space-y-4 px-6 py-10">
         <div className="rounded-lg border border-green-500/40 bg-green-500/10 p-6 text-center">
           <p className="text-sm font-semibold">Import applied</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            {appliedCount} of {items.length} rows touched contacts. {errors.length > 0 && `${errors.length} rows failed.`}
+            {applied?.touched ?? 0} of {totals.rows} rows touched contacts.
+            {applied && applied.errors > 0 ? ` ${applied.errors} rows failed.` : ""}
           </p>
           <div className="mt-3 flex justify-center gap-2">
             <Button size="sm" nativeButton={false} render={<Link href="/contacts" />}>View contacts</Button>
             <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/import" />}>Back to imports</Button>
           </div>
         </div>
-        {errors.length > 0 && (
-          <Section title="Rows that failed" items={errors} />
+        {items.length > 0 && (
+          <section>
+            <h2 className="mb-2 text-sm font-semibold">
+              Rows with problems <span className="font-normal text-muted-foreground">({items.length})</span>
+            </h2>
+            <ul className="space-y-2">
+              {items.map((item) => (
+                <ItemCard key={item.id} item={item} />
+              ))}
+            </ul>
+          </section>
         )}
-        <Section title="Applied rows" items={items.filter((i) => i.appliedContactId)} />
       </div>
     );
   }
@@ -271,95 +329,134 @@ export function ImportReview({
     );
   }
 
+  const activeTab = tabs.find((t) => t.key === activeGroup);
+  const percent = progress && progress.total ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) : 0;
+
   return (
-    <div className="mx-auto max-w-4xl space-y-5 px-6 py-6">
+    <div className="mx-auto max-w-4xl space-y-4 px-6 py-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold tracking-tight">{fileName}</h1>
           <p className="text-xs text-muted-foreground">
-            LinkedIn export dated {format(parseISO(exportDate), "MMMM d, yyyy")} · {items.length} rows ·{" "}
-            {needsReview.length > 0 ? (
-              <span className="text-yellow-400">{needsReview.length} need your call</span>
+            LinkedIn export dated {format(parseISO(exportDate), "MMMM d, yyyy")} · {totals.rows} rows ·{" "}
+            {totals.pendingReview > 0 ? (
+              <Link href={`/import/${batchId}?group=review`} className="text-yellow-400 hover:underline">
+                {totals.pendingReview} need your call
+              </Link>
             ) : (
               "nothing ambiguous left"
             )}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {status === "review" && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={running}
+              onClick={() => {
+                if (!confirm("Discard this import? Nothing has been written to your contacts.")) return;
+                start(async () => {
+                  const r = await discardImport(batchId);
+                  if (!r.ok) toast.error(r.error);
+                  else router.push("/import");
+                });
+              }}
+            >
+              <X className="size-3.5" /> Discard
+            </Button>
+          )}
           <Button
-            variant="outline"
             size="sm"
-            disabled={pending}
-            onClick={() => {
-              if (!confirm("Discard this import? Nothing has been written to your contacts.")) return;
-              start(async () => {
-                const r = await discardImport(batchId);
-                if (!r.ok) toast.error(r.error);
-                else router.push("/import");
-              });
-            }}
+            disabled={running || (status === "review" && totals.toApply === 0)}
+            onClick={runApply}
           >
-            <X className="size-3.5" /> Discard
-          </Button>
-          <Button
-            size="sm"
-            disabled={pending || toApply === 0}
-            onClick={() =>
-              start(async () => {
-                const r = await applyImport(batchId);
-                if (!r.ok) {
-                  toast.error(r.error);
-                  return;
-                }
-                toast.success(`Applied: ${r.data?.applied ?? 0} rows, ${r.data?.errors ?? 0} errors.`);
-                router.refresh();
-              })
-            }
-          >
-            {pending ? (
+            {running ? (
               <>
                 <Loader2 className="size-3.5 animate-spin" /> Applying…
               </>
             ) : (
               <>
-                <Check className="size-3.5" /> Apply {toApply} rows
+                <Check className="size-3.5" /> {status === "applying" ? "Resume apply" : `Apply ${totals.toApply} rows`}
               </>
             )}
           </Button>
         </div>
       </div>
 
-      {pending && (
-        <p className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-          Applying: contacts, locations and profile photos are being written. Large imports take a few minutes —
-          keep this tab open.
-        </p>
+      {(running || progress) && (
+        <div className="space-y-1.5">
+          <div className="h-2 overflow-hidden rounded-full bg-accent">
+            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {progress ? `${progress.processed} of ${progress.total} rows written` : "Starting…"} — contacts, locations
+            and profile photos are being written. Keep this tab open; an interrupted apply resumes.
+          </p>
+        </div>
       )}
 
-      <Section
-        title="Needs your call"
-        items={needsReview}
-        hint="These rows share a name with an existing contact but not a LinkedIn ID or email."
-      />
-      <Section title="Updates" items={updates} hint="Matched contacts with changes. Uncheck any change you don't want." />
-      <Section title="New contacts" items={creates} />
-      <Section title="No changes" items={unchanged} />
-      <Section title="Rows with problems" items={errors} />
+      {tabs.length > 0 && (
+        <nav className="flex flex-wrap gap-1 rounded-lg border bg-card p-1">
+          {tabs.map((t) => (
+            <Link
+              key={t.key}
+              href={`/import/${batchId}?group=${t.key}`}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm transition-colors",
+                t.key === activeGroup
+                  ? "bg-accent font-medium"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+              )}
+            >
+              {t.label} <span className="text-xs text-muted-foreground">{t.count}</span>
+            </Link>
+          ))}
+        </nav>
+      )}
 
-      {skipped.length > 0 && (
-        <div>
-          <button
-            type="button"
-            className="text-xs text-muted-foreground hover:text-foreground"
-            onClick={() => setShowSkipped(!showSkipped)}
+      {hint && status !== "applying" && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <p className="min-w-0 flex-1">{hint}</p>
+          <BulkBar batchId={batchId} group={activeGroup} count={activeTab?.count ?? 0} />
+        </div>
+      )}
+
+      {items.length === 0 ? (
+        <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+          Nothing in this group.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((item) => (
+            <ItemCard key={item.id} item={item} />
+          ))}
+        </ul>
+      )}
+
+      {pageCount > 1 && (
+        <div className="flex items-center justify-center gap-2 pt-1">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            nativeButton={false}
+            render={<Link href={`/import/${batchId}?group=${activeGroup}&page=${page - 1}`} />}
           >
-            {showSkipped ? "Hide" : "Show"} {skipped.length} skipped row{skipped.length === 1 ? "" : "s"}
-          </button>
-          {showSkipped && (
-            <div className="mt-2">
-              <Section title="Skipped" items={skipped} />
-            </div>
-          )}
+            <ChevronLeft className="size-3.5" /> Previous
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Page {page} of {pageCount}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= pageCount}
+            nativeButton={false}
+            render={<Link href={`/import/${batchId}?group=${activeGroup}&page=${page + 1}`} />}
+          >
+            Next <ChevronRight className="size-3.5" />
+          </Button>
         </div>
       )}
     </div>

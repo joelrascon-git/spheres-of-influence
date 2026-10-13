@@ -18,6 +18,7 @@ type Batch = {
 const STATUS_STYLE: Record<string, string> = {
   review: "border-primary/40 bg-primary/10 text-primary",
   processing: "border-yellow-500/40 bg-yellow-500/10 text-yellow-400",
+  applying: "border-blue-500/40 bg-blue-500/10 text-blue-400",
   applied: "border-green-500/40 bg-green-500/10 text-green-400",
   discarded: "border-foreground/20 text-muted-foreground",
 };

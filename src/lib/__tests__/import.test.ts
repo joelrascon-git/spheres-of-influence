@@ -146,10 +146,22 @@ describe("planImport", () => {
   });
 
   it("sends same-name, different-id rows to review", () => {
-    const other = { ...robert, linkedin_uid: "ACwOTHER", email: null };
+    const other = {
+      ...robert,
+      linkedin_uid: "ACwOTHER",
+      email: null,
+      linkedin_public_url: "https://www.linkedin.com/in/robert-m-mason-ii",
+    };
     const [item] = planImport([{ contact: other, accountId: "acct" }], [existing]);
     expect(item.action).toBe("review");
     expect(item.candidateContactIds).toEqual(["c1"]);
+  });
+  it("matches by public profile URL when the LinkedIn id differs", () => {
+    const moved = { ...robert, linkedin_uid: "ACwNEW", email: null, title: "VP, Data Architecture" };
+    const [item] = planImport([{ contact: moved, accountId: "acct" }], [existing]);
+    expect(item.matchReason).toBe("Public profile URL");
+    expect(item.action).toBe("update");
+    expect(item.diff.map((d) => d.field)).toEqual(["title"]);
   });
 
   it("skips duplicate rows within one file", () => {

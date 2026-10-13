@@ -55,6 +55,7 @@ export type ExistingContact = {
   first_name: string;
   last_name: string;
   statuses: string[];
+  linkedin_public_url?: string | null;
 } & Partial<Record<(typeof DIFFABLE_FIELDS)[number]["key"], string | null>>;
 
 export type PlannedItem = {
@@ -76,6 +77,13 @@ const nameKey = (first: string, last: string) =>
     .replace(/[^a-z ]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+
+/** The /in/<slug> part of a public LinkedIn profile URL, or null. */
+export function publicUrlSlug(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const m = url.toLowerCase().trim().replace(/\?.*$/, "").match(/linkedin\.com\/in\/([^/]+)\/?$/);
+  return m ? m[1] : null;
+}
 
 /** Re-derived start dates drift by a month between exports because Evaboot reports whole months. */
 const START_DATE_TOLERANCE_MONTHS = 1;
@@ -129,10 +137,13 @@ export function planImport(
 ): PlannedItem[] {
   const byUid = new Map<string, ExistingContact>();
   const byEmail = new Map<string, ExistingContact>();
+  const bySlug = new Map<string, ExistingContact>();
   const byName = new Map<string, ExistingContact[]>();
   for (const c of existing) {
     if (c.linkedin_uid) byUid.set(c.linkedin_uid, c);
     if (c.email) byEmail.set(c.email.toLowerCase(), c);
+    const slug = publicUrlSlug(c.linkedin_public_url);
+    if (slug && !bySlug.has(slug)) bySlug.set(slug, c);
     const k = nameKey(c.first_name, c.last_name);
     if (k) byName.set(k, [...(byName.get(k) ?? []), c]);
   }
@@ -149,12 +160,19 @@ export function planImport(
       seenUids.add(contact.linkedin_uid);
     }
 
+    const byUrl = publicUrlSlug(contact.linkedin_public_url) ? bySlug.get(publicUrlSlug(contact.linkedin_public_url)!) : null;
     const exact =
       (contact.linkedin_uid && byUid.get(contact.linkedin_uid)) ||
       (contact.email && byEmail.get(contact.email.toLowerCase())) ||
+      byUrl ||
       null;
     if (exact) {
-      const reason = contact.linkedin_uid && exact.linkedin_uid === contact.linkedin_uid ? "LinkedIn ID" : "Email";
+      const reason =
+        contact.linkedin_uid && exact.linkedin_uid === contact.linkedin_uid
+          ? "LinkedIn ID"
+          : contact.email && exact.email?.toLowerCase() === contact.email.toLowerCase()
+            ? "Email"
+            : "Public profile URL";
       const diff = diffContact(exact, contact, accountId);
       return {
         rowIndex,
