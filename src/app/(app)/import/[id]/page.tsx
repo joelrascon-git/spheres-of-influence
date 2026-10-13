@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { integrations } from "@/lib/env";
 import type { FieldDiff } from "@/lib/import/plan";
 import { REVIEW_GROUPS } from "../review-groups";
 import { ImportReview, type ReviewItem } from "./import-review";
@@ -115,6 +116,7 @@ export default async function ImportReviewPage({ params, searchParams }: PagePro
     fileName: batch.file_name ?? "Untitled",
     exportDate: batch.export_date,
     status: batch.status,
+    aiEnabled: integrations.anthropic(),
   };
   const countQuery = () =>
     supabase.from("import_items").select("id", { count: "exact", head: true }).eq("batch_id", id);

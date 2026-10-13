@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { ArrowLeft, ArrowRight, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,6 +28,7 @@ import {
   deleteContact,
   deleteInfluence,
   deleteNote,
+  generateContactBrief,
   setContactTags,
   updateContact,
   updateNote,
@@ -48,6 +49,44 @@ function useSave(contactId: string) {
 
 const rowClass = "flex items-center gap-2";
 const labelClass = "w-28 shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground";
+
+/** One-click research-grade brief: an appended note plus review-queue proposals. */
+export function AiBriefPanel({ contactId, enabled }: { contactId: string; enabled: boolean }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  return (
+    <section className="space-y-2 rounded-lg border bg-card p-4">
+      <h2 className="text-sm font-semibold">AI</h2>
+      <p className="text-xs text-muted-foreground">
+        {enabled
+          ? "Brief this person against the account's research. The brief lands in Notes; field-level proposals wait in the review queue."
+          : "Set ANTHROPIC_API_KEY in .env.local to enable AI briefs."}
+      </p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={!enabled || pending}
+        onClick={() =>
+          start(async () => {
+            const r = await generateContactBrief(contactId);
+            if (!r.ok) {
+              toast.error(r.error);
+              return;
+            }
+            toast.success(
+              r.data?.queued
+                ? `Brief added to Notes — ${r.data.queued} proposals queued for review.`
+                : "Brief added to Notes.",
+            );
+            router.refresh();
+          })
+        }
+      >
+        <Sparkles className="size-3.5" /> {pending ? "Thinking…" : "AI brief"}
+      </Button>
+    </section>
+  );
+}
 
 export function BasicsPanel({
   contact,

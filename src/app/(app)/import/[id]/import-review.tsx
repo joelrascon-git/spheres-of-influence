@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format, parseISO } from "date-fns";
-import { AlertTriangle, ArrowRight, Check, ChevronLeft, ChevronRight, Loader2, Plus, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronLeft, ChevronRight, Loader2, Plus, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,10 +14,13 @@ import {
   applyImportChunk,
   chooseMergeTarget,
   discardImport,
+  enrichImportChunk,
+  explainImportChange,
   setBulkDecision,
   setDiffAccept,
   setItemDecision,
   type ApplyProgress,
+  type EnrichProgress,
 } from "../actions";
 
 export type ReviewDiff = {
@@ -62,9 +65,11 @@ const ACTION_CHIP: Record<ReviewItem["action"], string> = {
   error: "border-red-500/40 bg-red-500/10 text-red-400",
 };
 
-function ItemCard({ item }: { item: ReviewItem }) {
+function ItemCard({ item, aiEnabled }: { item: ReviewItem; aiEnabled: boolean }) {
   const [, start] = useTransition();
   const included = item.decision === "accept" || item.decision === "merge";
+  const [explanation, setExplanation] = useState<string | null>(null);
+  const [explaining, setExplaining] = useState(false);
 
   const toggleInclude = () =>
     start(async () => {
@@ -153,46 +158,77 @@ function ItemCard({ item }: { item: ReviewItem }) {
       )}
 
       {item.diff.length > 0 && (
-        <table className="mt-2 w-full text-sm">
-          <tbody>
-            {item.diff.map((d) => {
-              const checked = d.accept ?? d.defaultAccept;
-              return (
-                <tr key={d.field} className="border-t first:border-t-0">
-                  <td className="w-8 py-1.5">
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={() =>
-                        start(async () => {
-                          const r = await setDiffAccept(item.id, d.field, !checked);
-                          if (!r.ok) toast.error(r.error);
-                        })
-                      }
-                      aria-label={`Apply ${d.label} change`}
-                    />
-                  </td>
-                  <td className="w-40 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {d.label}
-                  </td>
-                  <td className="max-w-56 truncate py-1.5 text-muted-foreground line-through" title={d.beforeDisplay}>
-                    {d.beforeDisplay || "empty"}
-                  </td>
-                  <td className="w-6 text-center text-muted-foreground">
-                    <ArrowRight className="mx-auto size-3" />
-                  </td>
-                  <td className="max-w-56 truncate py-1.5" title={d.afterDisplay}>
-                    {d.afterDisplay}
-                  </td>
-                  {d.note && (
-                    <td className="py-1.5 pl-4 text-xs text-muted-foreground" colSpan={d.note ? 1 : 0}>
-                      {d.note}
+        <>
+          <table className="mt-2 w-full text-sm">
+            <tbody>
+              {item.diff.map((d) => {
+                const checked = d.accept ?? d.defaultAccept;
+                return (
+                  <tr key={d.field} className="border-t first:border-t-0">
+                    <td className="w-8 py-1.5">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() =>
+                          start(async () => {
+                            const r = await setDiffAccept(item.id, d.field, !checked);
+                            if (!r.ok) toast.error(r.error);
+                          })
+                        }
+                        aria-label={`Apply ${d.label} change`}
+                      />
                     </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td className="w-40 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {d.label}
+                    </td>
+                    <td className="max-w-56 truncate py-1.5 text-muted-foreground line-through" title={d.beforeDisplay}>
+                      {d.beforeDisplay || "empty"}
+                    </td>
+                    <td className="w-6 text-center text-muted-foreground">
+                      <ArrowRight className="mx-auto size-3" />
+                    </td>
+                    <td className="max-w-56 truncate py-1.5" title={d.afterDisplay}>
+                      {d.afterDisplay}
+                    </td>
+                    {d.note && (
+                      <td className="py-1.5 pl-4 text-xs text-muted-foreground" colSpan={d.note ? 1 : 0}>
+                        {d.note}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {aiEnabled && (
+            <div className="mt-1.5">
+              {explanation ? (
+                <p className="border-l-2 border-primary/40 pl-2 text-xs italic text-muted-foreground">{explanation}</p>
+              ) : (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline disabled:opacity-50"
+                  disabled={explaining}
+                  onClick={async () => {
+                    setExplaining(true);
+                    try {
+                      const r = await explainImportChange(item.id);
+                      if (!r.ok) {
+                        toast.error(r.error);
+                        return;
+                      }
+                      setExplanation(r.data?.explanation ?? "No explanation returned.");
+                    } finally {
+                      setExplaining(false);
+                    }
+                  }}
+                >
+                  <Sparkles className="size-3" />
+                  {explaining ? "Thinking…" : "Why did this change?"}
+                </button>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {item.action === "unchanged" && item.decision !== "skip" && (
@@ -226,6 +262,72 @@ function BulkBar({ batchId, group, count }: { batchId: string; group: string; co
   );
 }
 
+/** Post-apply AI pass: senior, key and ambiguous contacts → proposals for review. */
+function EnrichSection({ batchId, aiEnabled }: { batchId: string; aiEnabled: boolean }) {
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<EnrichProgress | null>(null);
+
+  /** Chunked like the apply loop, so an interrupted run resumes from batch stats. */
+  async function runEnrich() {
+    setRunning(true);
+    try {
+      for (let guard = 0; guard < 500; guard++) {
+        const r = await enrichImportChunk(batchId);
+        if (!r.ok) {
+          toast.error(r.error);
+          return;
+        }
+        if (!r.data) {
+          toast.error("Enrichment failed.");
+          return;
+        }
+        setProgress(r.data);
+        if (r.data.done) {
+          const t = r.data.failed > 0 ? toast.warning : toast.success;
+          t(
+            r.data.queued
+              ? `Queued ${r.data.queued} proposals for review${r.data.failed ? `, ${r.data.failed} rows failed` : ""}.`
+              : `No new proposals${r.data.failed ? `, ${r.data.failed} rows failed` : ""}.`,
+          );
+          return;
+        }
+      }
+      toast.error("Enrichment stopped early. Press the button again to resume.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  if (!aiEnabled) return null;
+  return (
+    <section className="rounded-lg border p-4">
+      <h2 className="text-sm font-semibold">AI enrichment</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Sends the senior, key and ambiguously-matched contacts from this import to Claude in batches. Every proposal
+        waits in the review queue — nothing is written without your call.
+      </p>
+      {(running || progress) && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {progress
+            ? `${progress.processed} of ${progress.total} rows examined · ${progress.queued} proposals queued`
+            : "Starting…"}
+        </p>
+      )}
+      <Button size="sm" className="mt-3" disabled={running || progress?.done} onClick={runEnrich}>
+        {running ? (
+          <>
+            <Loader2 className="size-3.5 animate-spin" /> Enriching…
+          </>
+        ) : (
+          <>
+            <Sparkles className="size-3.5" /> {progress?.done ? "Enrichment done" : "Enrich key contacts"}
+          </>
+        )}
+      </Button>
+    </section>
+  );
+}
+
 export function ImportReview({
   batchId,
   fileName,
@@ -239,6 +341,7 @@ export function ImportReview({
   pageCount,
   totals,
   applied,
+  aiEnabled = false,
 }: {
   batchId: string;
   fileName: string;
@@ -252,6 +355,7 @@ export function ImportReview({
   pageCount: number;
   totals: { rows: number; pendingReview: number; toApply: number };
   applied?: { touched: number; errors: number };
+  aiEnabled?: boolean;
 }) {
   const router = useRouter();
   const [, start] = useTransition();
@@ -300,6 +404,7 @@ export function ImportReview({
             <Button variant="outline" size="sm" nativeButton={false} render={<Link href="/import" />}>Back to imports</Button>
           </div>
         </div>
+        <EnrichSection batchId={batchId} aiEnabled={aiEnabled} />
         {items.length > 0 && (
           <section>
             <h2 className="mb-2 text-sm font-semibold">
@@ -307,7 +412,7 @@ export function ImportReview({
             </h2>
             <ul className="space-y-2">
               {items.map((item) => (
-                <ItemCard key={item.id} item={item} />
+                <ItemCard key={item.id} item={item} aiEnabled={aiEnabled} />
               ))}
             </ul>
           </section>
@@ -429,7 +534,7 @@ export function ImportReview({
       ) : (
         <ul className="space-y-2">
           {items.map((item) => (
-            <ItemCard key={item.id} item={item} />
+            <ItemCard key={item.id} item={item} aiEnabled={aiEnabled} />
           ))}
         </ul>
       )}

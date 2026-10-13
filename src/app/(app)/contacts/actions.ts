@@ -1,11 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { format } from "date-fns";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { geocodeCached, placeColumns } from "@/lib/geocode-server";
 import type { Place } from "@/lib/geocode";
+import { aiCompleteJson, aiConfigured, getStoredPrompt } from "@/lib/ai/client";
+import { queueInferences, type InferenceProposal } from "@/lib/inference/queue";
+import { markdownToHtml } from "@/lib/markdown";
+import { getContact } from "@/lib/data";
 
 export type ActionResult<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -290,4 +295,154 @@ export async function deleteView(id: string): Promise<ActionResult> {
   await supabase.from("saved_views").delete().eq("id", id);
   revalidatePath("/contacts");
   return { ok: true };
+}
+
+// ───────── AI brief ─────────
+
+const briefProposal = z.object({
+  kind: z.enum([
+    "persona",
+    "seniority_level",
+    "org_assignment",
+    "key_person",
+    "reporting_line",
+    "initiative_link",
+    "challenge_link",
+    "field",
+    "summary",
+  ]),
+  value: z.record(z.string(), z.unknown()),
+  confidence: z.enum(["confirmed", "secondhand", "unverified", "inference"]).optional(),
+  evidence: z
+    .array(
+      z.object({
+        claim: z.string(),
+        source_label: z.string().optional(),
+        source_url: z.string().optional(),
+        confidence: z.enum(["confirmed", "secondhand", "unverified", "inference"]).optional(),
+      }),
+    )
+    .optional(),
+  rationale: z.string().optional(),
+});
+
+const briefResponse = z.object({
+  brief_markdown: z.string().min(1).max(20000),
+  proposals: z.array(briefProposal).max(30).default([]),
+});
+
+/**
+ * Briefs one contact against the workspace's knowledge: an appended note with the
+ * brief, plus field-level proposals in the inference review queue. The AI never
+ * writes contact fields directly.
+ */
+export async function generateContactBrief(contactId: string): Promise<ActionResult<{ queued: number }>> {
+  const { supabase, user } = await requireUser();
+  if (!aiConfigured())
+    return { ok: false, error: "AI is not configured. Add ANTHROPIC_API_KEY to .env.local and restart." };
+  const contact = await getContact(supabase, contactId);
+  if (!contact) return { ok: false, error: "Contact not found." };
+
+  const [accountRes, orgRes, managerRes, initiativeRes, challengeRes, personaRes] = await Promise.all([
+    contact.account_id
+      ? supabase
+          .from("accounts")
+          .select("name, entity_type, why_anything, why_factory, why_now, notes")
+          .eq("id", contact.account_id)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    contact.org_id
+      ? supabase.from("orgs").select("name, factory_fit, buying_role, rank").eq("id", contact.org_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    contact.reports_to_id
+      ? supabase.from("contacts").select("full_name, title").eq("id", contact.reports_to_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase
+      .from("contact_initiatives")
+      .select("strength, initiatives ( code, name, summary, factory_fit )")
+      .eq("contact_id", contactId),
+    supabase
+      .from("contact_challenges")
+      .select("strength, challenges ( code, name, summary, factory_fit )")
+      .eq("contact_id", contactId),
+    contact.personas.length
+      ? supabase
+          .from("persona_catalog")
+          .select("code, name, definition, one_liner")
+          .in("code", contact.personas)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const context = {
+    contact: {
+      name: contact.full_name,
+      title: contact.title,
+      headline: contact.headline,
+      summary: contact.summary,
+      job_description: contact.job_description,
+      location: contact.location,
+      seniority: contact.seniority,
+      seniority_level: contact.seniority_level,
+      personas: contact.personas,
+      persona_status: contact.persona_status,
+      champion_flag: contact.champion_flag,
+      can_veto: contact.can_veto,
+      influence_score: contact.influence_score,
+      is_key: contact.is_key,
+      key_reasoning: contact.key_reasoning,
+      buying_role: contact.buying_role,
+      engage_stage: contact.engage_stage,
+      evidence: contact.evidence,
+      gaps: contact.gaps,
+    },
+    reports_to: managerRes.data ? { name: (managerRes.data as { full_name: string }).full_name } : null,
+    account: accountRes.data,
+    org: orgRes.data,
+    linked_initiatives: (initiativeRes.data ?? []).map((r) => ({
+      strength: (r as { strength: string }).strength,
+      ...(r as unknown as { initiatives: Record<string, string> }).initiatives,
+    })),
+    linked_challenges: (challengeRes.data ?? []).map((r) => ({
+      strength: (r as { strength: string }).strength,
+      ...(r as unknown as { challenges: Record<string, string> }).challenges,
+    })),
+    persona_definitions: personaRes.data ?? [],
+    seller_note:
+      "Reason with this context only. Ground claims in the evidence; mark anything less as inferred.",
+  };
+
+  let brief;
+  try {
+    const prompt = await getStoredPrompt(supabase, "key_person_brief");
+    brief = briefResponse.parse(
+      await aiCompleteJson<unknown>({ model: prompt.model, system: prompt.system_prompt, user: JSON.stringify(context) }),
+    );
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "The AI brief failed." };
+  }
+
+  const bodyHtml =
+    `<h3>AI brief — ${format(new Date(), "MMM d, yyyy")}</h3>\n` +
+    markdownToHtml(brief.brief_markdown) +
+    `\n<p><em>Proposals from this brief are waiting in the review queue.</em></p>`;
+  const { error: noteError } = await supabase
+    .from("notes")
+    .insert({ contact_id: contactId, body_html: bodyHtml, source: "ai" });
+  if (noteError) return { ok: false, error: noteError.message };
+
+  const proposals: InferenceProposal[] = brief.proposals.map((p) => ({
+    subject_type: "contact",
+    subject_id: contactId,
+    kind: p.kind,
+    value: p.value,
+    confidence: p.confidence,
+    evidence: (p.evidence ?? []).map((e) => ({ ...e, confidence: e.confidence ?? "inference" })),
+    rationale: p.rationale,
+    source: "ai",
+  }));
+  const queued = await queueInferences(supabase, user.id, proposals);
+
+  await logActivity(supabase, "contact", contactId, "ai_brief", { queued }, "ai");
+  revalidateContact(contactId);
+  return { ok: true, data: { queued } };
 }

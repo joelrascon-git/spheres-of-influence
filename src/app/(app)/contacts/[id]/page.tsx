@@ -5,6 +5,7 @@ import { ArrowLeft, ExternalLink, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ContactAvatar, KeyStar, PersonaBadge, StatusBadge } from "@/components/contact-bits";
 import { requireUser } from "@/lib/auth";
+import { integrations } from "@/lib/env";
 import { DEFAULT_STATUSES, PERSONA_CODES, seniorityLabel } from "@/lib/constants";
 import {
   getContact,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/data";
 import { tenure } from "@/lib/tenure";
 import {
+  AiBriefPanel,
   BasicsPanel,
   CustomFieldsPanel,
   DangerPanel,
@@ -205,6 +207,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
         </div>
 
         <div className="space-y-4">
+          <AiBriefPanel contactId={contact.id} enabled={integrations.anthropic()} />
           <TagsPanel contactId={contact.id} tagIds={relations.tagIds} tags={tags} />
           <PersonalDetailsPanel contact={contact} />
           <CustomFieldsPanel contact={contact} fields={customFields} />

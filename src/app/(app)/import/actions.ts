@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import Papa from "papaparse";
+import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { geocodeCached, placeColumns } from "@/lib/geocode-server";
@@ -17,6 +18,8 @@ import { diffContact, planImport, SILENT_FIELDS, type ExistingContact, type Fiel
 import { companyKey, planAccounts, type ExistingAccount } from "@/lib/import/accounts";
 import { classifyContact, type Classification } from "@/lib/inference/classify";
 import type { OrgRef } from "@/lib/inference/orgs";
+import { queueInferences, type InferenceProposal } from "@/lib/inference/queue";
+import { aiComplete, aiCompleteJson, aiConfigured, getStoredPrompt } from "@/lib/ai/client";
 import type { Evidence } from "@/lib/types";
 import { REVIEW_GROUPS, withGroup } from "./review-groups";
 import type { ActionResult } from "@/app/(app)/contacts/actions";
@@ -647,4 +650,257 @@ export async function applyImportChunk(batchId: string): Promise<ActionResult<Ap
     revalidatePath("/accounts");
   }
   return { ok: true, data: progress };
+}
+
+// ───────── AI: per-row explanations and post-import enrichment ─────────
+
+/** Explains one row's diff in seller terms. Read-only: writes nothing. */
+export async function explainImportChange(itemId: string): Promise<ActionResult<{ explanation: string }>> {
+  const { supabase } = await requireUser();
+  if (!aiConfigured())
+    return { ok: false, error: "AI is not configured. Add ANTHROPIC_API_KEY to .env.local and restart." };
+  const { data: raw } = await supabase
+    .from("import_items")
+    .select("id, full_name, payload, diff, match_reason")
+    .eq("id", itemId)
+    .maybeSingle();
+  if (!raw) return { ok: false, error: "Import row not found." };
+  const item = raw as unknown as { id: string; full_name: string | null; payload: ItemPayload; diff: FieldDiff[]; match_reason: string | null };
+  if (!item.diff?.length) return { ok: false, error: "Nothing changed on this row." };
+
+  // Company diffs carry account ids; the model needs names.
+  const accountIds = item.diff.filter((d) => d.field === "company").flatMap((d) => [d.before, d.after]);
+  const names = new Map<string, string>();
+  for (let i = 0; i < accountIds.length; i += 400) {
+    const chunk = accountIds.slice(i, i + 400).filter(Boolean) as string[];
+    if (!chunk.length) continue;
+    const { data } = await supabase.from("accounts").select("id, name").in("id", chunk);
+    for (const a of data ?? []) names.set((a as { id: string }).id, (a as { name: string }).name);
+  }
+  const changes = item.diff.map((d) => ({
+    field: d.field,
+    label: d.label,
+    before: d.field === "company" ? (names.get(d.before ?? "") ?? d.before) : d.before,
+    after: d.field === "company" ? (names.get(d.after ?? "") ?? d.after) : d.after,
+  }));
+
+  const prompt = await getStoredPrompt(supabase, "import_change_summary");
+  const explanation = await aiComplete({
+    model: prompt.model,
+    system: prompt.system_prompt,
+    user: JSON.stringify({
+      person: item.full_name,
+      matched_by: item.match_reason,
+      profile: {
+        title: item.payload.contact.title,
+        headline: item.payload.contact.headline,
+        summary: item.payload.contact.summary,
+        location: item.payload.contact.location,
+        role_start: item.payload.contact.role_start,
+        company_start: item.payload.contact.company_start,
+      },
+      changes,
+    }),
+  });
+  return { ok: true, data: { explanation: explanation.trim() } };
+}
+
+export type EnrichProgress = {
+  done: boolean;
+  /** Items examined so far, over every applied item in the batch. */
+  processed: number;
+  total: number;
+  queued: number;
+  failed: number;
+};
+
+const ENRICH_ROWS = 8;
+
+const enrichmentProposal = z.object({
+  kind: z.enum(["persona", "seniority_level", "org_assignment", "reporting_line", "key_person", "field"]),
+  value: z.record(z.string(), z.unknown()),
+  confidence: z.enum(["confirmed", "secondhand", "unverified", "inference"]).optional(),
+  evidence: z
+    .array(
+      z.object({
+        claim: z.string(),
+        source_label: z.string().optional(),
+        source_url: z.string().optional(),
+        confidence: z.enum(["confirmed", "secondhand", "unverified", "inference"]).optional(),
+      }),
+    )
+    .optional(),
+  rationale: z.string().optional(),
+});
+
+const enrichmentResponse = z.object({
+  contacts: z
+    .array(z.object({ name: z.string(), proposals: z.array(enrichmentProposal).max(20).default([]) }))
+    .max(ENRICH_ROWS)
+    .default([]),
+});
+
+/**
+ * Enrich the next slice of an applied import: senior, key and ambiguously-matched
+ * contacts whose personas are still title-assumed go to the model in one batch,
+ * and every proposal lands in the inference review queue. The client loops this
+ * action like applyImportChunk; progress lives in the batch stats so an
+ * interrupted run resumes.
+ */
+export async function enrichImportChunk(batchId: string): Promise<ActionResult<EnrichProgress>> {
+  const { supabase, user } = await requireUser();
+  if (!aiConfigured())
+    return { ok: false, error: "AI is not configured. Add ANTHROPIC_API_KEY to .env.local and restart." };
+  const { data: rawBatch } = await supabase
+    .from("import_batches")
+    .select("id, status, stats")
+    .eq("id", batchId)
+    .maybeSingle();
+  if (!rawBatch) return { ok: false, error: "Import not found." };
+  const batch = rawBatch as unknown as { id: string; status: string; stats: Record<string, unknown> };
+  if (batch.status !== "applied")
+    return { ok: false, error: "Apply the import first; enrichment runs on the applied rows." };
+
+  const state = (batch.stats?.enrichment ?? {}) as {
+    cursor?: number;
+    processed?: number;
+    queued?: number;
+    failed?: number;
+  };
+  const cursor = state.cursor ?? -1;
+  const processed = state.processed ?? 0;
+  const queuedTotal = state.queued ?? 0;
+  const failedTotal = state.failed ?? 0;
+
+  const { count: total } = await supabase
+    .from("import_items")
+    .select("id", { count: "exact", head: true })
+    .eq("batch_id", batchId)
+    .filter("applied_contact_id", "not.is", null);
+
+  const { data: rawRows } = await supabase
+    .from("import_items")
+    .select("row_index, action, applied_contact_id, payload")
+    .eq("batch_id", batchId)
+    .filter("applied_contact_id", "not.is", null)
+    .gt("row_index", cursor)
+    .order("row_index")
+    .limit(ENRICH_ROWS);
+  const rows = (rawRows ?? []) as unknown as {
+    row_index: number;
+    action: string;
+    applied_contact_id: string;
+    payload: ItemPayload;
+  }[];
+
+  const done = rows.length < ENRICH_ROWS;
+  if (!rows.length) {
+    const progress = { done: true, processed, total: total ?? processed, queued: queuedTotal, failed: failedTotal };
+    return { ok: true, data: progress };
+  }
+
+  // Which of this slice is worth the model's time: what a title alone cannot earn.
+  const { data: rawContacts } = await supabase
+    .from("contacts")
+    .select(
+      "id, full_name, title, headline, summary, job_description, location, seniority, seniority_level, personas, persona_status, is_key, account_id, org_id",
+    )
+    .in("id", rows.map((r) => r.applied_contact_id));
+  const contactById = new Map(
+    ((rawContacts ?? []) as Record<string, unknown>[]).map((c) => [c.id as string, c]),
+  );
+  const rowByContact = new Map(rows.map((r) => [r.applied_contact_id, r]));
+  const candidates = [...contactById.values()].filter((c) => {
+    const personaStatus = c.persona_status as string | null;
+    if (personaStatus && personaStatus !== "assumed") return false; // Research ground truth already covers them.
+    const senior = ["c_level", "vp", "director"].includes(c.seniority as string);
+    const ambiguous = rowByContact.get(c.id as string)?.action === "review";
+    return c.is_key === true || senior || ambiguous;
+  });
+
+  let queued = 0;
+  let failed = 0;
+  if (candidates.length) {
+    const accountIds = [...new Set(candidates.map((c) => c.account_id).filter(Boolean))] as string[];
+    const { data: orgRows } = accountIds.length
+      ? await supabase.from("orgs").select("account_id, name, aliases").in("account_id", accountIds)
+      : { data: [] };
+    const { data: accountRows } = accountIds.length
+      ? await supabase.from("accounts").select("id, name").in("id", accountIds)
+      : { data: [] };
+    const accountName = new Map(((accountRows ?? []) as { id: string; name: string }[]).map((a) => [a.id, a.name]));
+
+    const context = {
+      candidates: candidates.map((c) => ({
+        name: c.full_name,
+        title: c.title,
+        headline: c.headline,
+        summary: c.summary,
+        job_description: c.job_description,
+        location: c.location,
+        seniority_level_so_far: c.seniority_level,
+        personas_so_far: c.personas,
+        role_start: rowByContact.get(c.id as string)?.payload.contact.role_start,
+        company_start: rowByContact.get(c.id as string)?.payload.contact.company_start,
+        account: c.account_id ? (accountName.get(c.account_id as string) ?? null) : null,
+      })),
+      existing_orgs: (orgRows ?? []).map((o) => ({
+        account: accountName.get((o as { account_id: string }).account_id) ?? null,
+        name: (o as { name: string }).name,
+        aliases: (o as { aliases: string[] }).aliases,
+      })),
+    };
+
+    try {
+      const prompt = await getStoredPrompt(supabase, "import_inference");
+      const parsed = enrichmentResponse.parse(
+        await aiCompleteJson<unknown>({ model: prompt.model, system: prompt.system_prompt, user: JSON.stringify(context) }),
+      );
+      const byName = new Map(candidates.map((c) => [String(c.full_name).toLowerCase(), c.id as string]));
+      const proposals: InferenceProposal[] = [];
+      for (const entry of parsed.contacts) {
+        const subjectId = byName.get(entry.name.trim().toLowerCase());
+        if (!subjectId) continue; // The model invented a name; keep it out of the queue.
+        for (const p of entry.proposals) {
+          proposals.push({
+            subject_type: "contact",
+            subject_id: subjectId,
+            kind: p.kind,
+            value: p.value,
+            confidence: p.confidence,
+            evidence: (p.evidence ?? []).map((e) => ({ ...e, confidence: e.confidence ?? "inference" })),
+            rationale: p.rationale,
+            source: "ai",
+          });
+        }
+      }
+      queued = await queueInferences(supabase, user.id, proposals);
+    } catch (e) {
+      // A malformed model answer will not fix itself on retry: skip the slice and count it.
+      if (e instanceof z.ZodError) failed = candidates.length;
+      else {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : "Enrichment failed. Retry to continue where it stopped.",
+        };
+      }
+    }
+  }
+
+  const enrichment = {
+    cursor: rows[rows.length - 1].row_index,
+    processed: processed + rows.length,
+    queued: queuedTotal + queued,
+    failed: failedTotal + failed,
+  };
+  const { error: statsError } = await supabase
+    .from("import_batches")
+    .update({ stats: { ...(batch.stats ?? {}), enrichment } })
+    .eq("id", batchId);
+  if (statsError) return { ok: false, error: statsError.message };
+
+  return {
+    ok: true,
+    data: { done, processed: enrichment.processed, total: total ?? enrichment.processed, queued: enrichment.queued, failed: enrichment.failed },
+  };
 }
