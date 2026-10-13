@@ -1,4 +1,4 @@
-import { DEFAULT_PERSONAS, DEFAULT_STATUSES, SENIORITY } from "@/lib/constants";
+import { DEFAULT_STATUSES, ENGAGE_STAGES, PERSONA_CODES, SENIORITY, SENIORITY_LEVELS } from "@/lib/constants";
 import type { FieldDefinition, Prompt, StyleRule } from "@/lib/types";
 
 type FieldSeed = Omit<FieldDefinition, "id" | "is_system" | "help_text"> & { help_text?: string };
@@ -34,15 +34,23 @@ export const SYSTEM_FIELDS: FieldSeed[] = [
     show_on_canvas: true,
   }),
   f("contact", "personas", "Persona", "multi_select", {
-    options: DEFAULT_PERSONAS,
+    options: PERSONA_CODES.map((p) => p.code),
     show_in_list: true,
     show_on_canvas: true,
+    help_text: "Codes from the persona taxonomy (EB, CH, DM…). Full names come from the persona catalog in Admin.",
   }),
   f("contact", "statuses", "Status", "multi_select", {
     options: DEFAULT_STATUSES,
     show_in_list: true,
     show_on_canvas: true,
   }),
+  f("contact", "seniority_level", "Seniority Level", "select", {
+    options: SENIORITY_LEVELS.map((l) => l.value),
+    show_in_list: false,
+    help_text: "L1–L6 ladder from the persona knowledge base; finer than Seniority.",
+  }),
+  f("contact", "buying_role", "Buying Role", "text", { show_in_list: false }),
+  f("contact", "engage_stage", "Engage Stage", "select", { options: [...ENGAGE_STAGES] }),
   f("contact", "is_key", "Key Contact", "boolean", { show_in_list: true, show_on_canvas: true }),
   f("contact", "key_reasoning", "Key Contact Reasoning", "rich_text"),
   f("contact", "email", "Email", "email", { show_in_list: true }),
@@ -131,6 +139,15 @@ export const DEFAULT_STYLE_RULES: Omit<StyleRule, "id">[] = [
     enabled: true,
   },
   {
+    name: "Out of scope",
+    field: "statuses",
+    operator: "contains",
+    value: "Out of Scope",
+    style: { opacity: 0.4, badge: "OOS" },
+    priority: 95,
+    enabled: true,
+  },
+  {
     name: "Nurture",
     field: "statuses",
     operator: "contains",
@@ -149,11 +166,61 @@ const PROVENANCE_RULES = `Rules:
 - Never overwrite seller-entered data. Notes are appended, never replaced. If new information conflicts with existing data, propose the change and explain the conflict instead of silently replacing it.
 - Prefer fewer, high-quality proposals over many speculative ones.`;
 
-type PromptSeed = Omit<Prompt, "id" | "version" | "updated_at">;
+type PromptSeed = Omit<Prompt, "id" | "updated_at">;
+
+/** The persona taxonomy, seeded into persona_catalog so labels and definitions are editable. */
+export const PERSONA_CATALOG_SEED: {
+  code: string;
+  name: string;
+  definition: string;
+  one_liner: string;
+  weight: number;
+  can_veto: boolean;
+  meddpicc: string;
+  sort_order: number;
+}[] = [
+  { code: "EB", name: "Economic Buyer", weight: 10, can_veto: true, meddpicc: "E – Economic Buyer", sort_order: 1,
+    one_liner: "Final budget authority; can say yes when others say no.",
+    definition: "The one person with overall authority over the financial decision for the scope being sold. For Factory, the executive who owns the budget for engineering productivity / AI-assisted software delivery / modernization at the deal's scope, and who can overrule a no from below." },
+  { code: "CH", name: "Champion", weight: 9, can_veto: false, meddpicc: "C – Champion", sort_order: 2,
+    one_liner: "Actively sells Factory internally; validated only by actions.",
+    definition: "An internal stakeholder with power and influence who actively advocates for Factory when the seller is not in the room, with a personal win tied to Factory's success. Never assigned from a title alone: the most a title earns is Potential Champion." },
+  { code: "DM", name: "Decision Maker", weight: 9, can_veto: false, meddpicc: "D – Decision Criteria / Process", sort_order: 3,
+    one_liner: "Holds a formal vote or writes the decision criteria.",
+    definition: "Anyone with a formal vote or approval in choosing the vendor, or who writes the decision criteria. May not own the budget but can choose between options. Councils (architecture review boards, AI governance) are DMs in aggregate." },
+  { code: "BS", name: "Business Sponsor", weight: 8, can_veto: false, meddpicc: "M – Metrics; I – Pain", sort_order: 4,
+    one_liner: "Owns the business outcome and gives political air cover.",
+    definition: "An executive who owns the business outcome the deal serves and provides political air cover. Segment presidents and program owners (e.g. an AI transformation office) typically land here." },
+  { code: "TECH", name: "Technical", weight: 7, can_veto: true, meddpicc: "D – Decision Criteria", sort_order: 5,
+    one_liner: "Sets and approves technical requirements and architecture fit.",
+    definition: "Sets and approves technical requirements and architecture fit. Separated from EVAL (hands-on activity): TECH is about authority to approve the technical decision." },
+  { code: "INFOSEC", name: "InfoSec", weight: 7, can_veto: true, meddpicc: "P – Paper Process", sort_order: 6,
+    one_liner: "Security, technology-risk and AI-governance reviewers who must approve.",
+    definition: "Security, technology-risk and AI-governance reviewers who must approve autonomous agents touching code. Seldom advance a deal, but each can stop one: flag can_veto." },
+  { code: "EVAL", name: "Evaluator", weight: 6, can_veto: false, meddpicc: "M – Metrics", sort_order: 7,
+    one_liner: "Runs the hands-on pilot/POC and scores results.",
+    definition: "Runs the hands-on pilot or POC and scores results. A bad pilot is a soft veto. Distinguished from TECH by activity, not authority." },
+  { code: "FIN", name: "Finance", weight: 5, can_veto: true, meddpicc: "E – Economic Buyer", sort_order: 8,
+    one_liner: "Validates the business case, ROI, budget source and forecasts.",
+    definition: "Validates the business case, ROI, budget source and consumption forecasts. Consumption pricing pulls Finance in earlier than seat-based tools." },
+  { code: "PROC", name: "Procurement", weight: 5, can_veto: true, meddpicc: "P – Paper Process", sort_order: 9,
+    one_liner: "Runs sourcing, vendor onboarding and third-party risk intake.",
+    definition: "Runs sourcing, vendor onboarding, third-party risk intake and the commercial process. Marketplace procurement changes the purchasing path and who signs." },
+  { code: "LEGAL", name: "Legal", weight: 5, can_veto: true, meddpicc: "P – Paper Process", sort_order: 10,
+    one_liner: "Negotiates contract, data, IP, privacy and AI terms.",
+    definition: "Negotiates contract, data, IP, privacy and AI terms. Cares which LLM providers see code, data residency, and indemnities." },
+  { code: "COACH", name: "Coach / Influencer", weight: 5, can_veto: false, meddpicc: "C (pre-Champion)", sort_order: 11,
+    one_liner: "Gives inside information or shapes opinion without formal power.",
+    definition: "Gives inside information or shapes opinion without necessarily holding power. Chiefs of staff and long-tenured principal engineers often land here. Never forecast on a coach." },
+  { code: "PARTNER", name: "Partner", weight: 4, can_veto: false, meddpicc: "Competition; Decision Process", sort_order: 12,
+    one_liner: "External partner people who shape or source the deal.",
+    definition: "External partner people (GSI, cloud, AI lab, ISV) and customer-side alliance owners who shape or source the deal. They cannot formally veto but can derail." },
+];
 
 export const DEFAULT_PROMPTS: PromptSeed[] = [
   {
     key: "import_inference",
+    version: 1,
     name: "Import: infer orgs, reporting lines and influence",
     description: "Runs after a contact import. Proposes orgs, org descriptions, reporting lines and influence evidence for review.",
     model: "claude-opus-5-5",
@@ -174,6 +241,7 @@ Return only the JSON described by the tool schema.`,
   },
   {
     key: "import_change_summary",
+    version: 1,
     name: "Import: summarize what changed",
     description: "Explains differences between a re-imported LinkedIn profile and the stored contact.",
     model: "claude-sonnet-5-5",
@@ -183,6 +251,7 @@ You receive field-level differences between a contact's stored LinkedIn data and
   },
   {
     key: "chat_assistant",
+    version: 1,
     name: "Chat: account second brain",
     description: "The in-app assistant. Answers questions from workspace data and proposes updates.",
     model: "claude-opus-5-5",
@@ -204,6 +273,7 @@ ${PROVENANCE_RULES}`,
   },
   {
     key: "context_extraction",
+    version: 1,
     name: "Extract updates from notes, transcripts and documents",
     description: "Parses meeting notes, transcripts and documents into proposed changes.",
     model: "claude-opus-5-5",
@@ -228,6 +298,7 @@ Return only the JSON described by the tool schema. Quote the source text that su
   },
   {
     key: "research_contradictions",
+    version: 1,
     name: "Research: detect contradictions and new information",
     description: "Compares new intel against the account's deep-research document.",
     model: "claude-opus-5-5",
@@ -240,6 +311,7 @@ For each item, propose the exact edit to the research text. Do not rewrite secti
   },
   {
     key: "research_formatting",
+    version: 1,
     name: "Research: format an uploaded document",
     description: "Turns an uploaded deep-research file into clean, structured rich text.",
     model: "claude-sonnet-5-5",
@@ -247,6 +319,7 @@ For each item, propose the exact edit to the research text. Do not rewrite secti
   },
   {
     key: "contact_classification",
+    version: 1,
     name: "Classify seniority and persona",
     description: "Quick seniority and persona suggestion from a title and headline.",
     model: "claude-sonnet-5-5",

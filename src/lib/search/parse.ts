@@ -44,7 +44,11 @@ export const SEARCH_FIELDS: Record<string, string> = {
   status: "status",
   persona: "persona",
   seniority: "seniority",
-  level: "seniority",
+  level: "seniority_level",
+  buying_role: "buying_role",
+  role: "buying_role",
+  engage_stage: "engage_stage",
+  stage: "engage_stage",
 };
 
 const SENIORITY_ALIASES: Record<string, string> = {

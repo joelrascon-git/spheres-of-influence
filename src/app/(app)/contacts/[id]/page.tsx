@@ -5,7 +5,7 @@ import { ArrowLeft, ExternalLink, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ContactAvatar, KeyStar, PersonaBadge, StatusBadge } from "@/components/contact-bits";
 import { requireUser } from "@/lib/auth";
-import { DEFAULT_PERSONAS, DEFAULT_STATUSES, seniorityLabel } from "@/lib/constants";
+import { DEFAULT_STATUSES, PERSONA_CODES, seniorityLabel } from "@/lib/constants";
 import {
   getContact,
   getContactRelations,
@@ -94,7 +94,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
     };
   });
 
-  const personasOptions = fields.find((f) => f.key === "personas")?.options ?? DEFAULT_PERSONAS;
+  const personasOptions = fields.find((f) => f.key === "personas")?.options ?? PERSONA_CODES.map((p) => p.code);
   const statusOptions = fields.find((f) => f.key === "statuses")?.options ?? DEFAULT_STATUSES;
   const customFields = fields.filter((f) => !f.is_system && f.show_in_profile);
   const t = tenure(contact.role_start, contact.company_start);

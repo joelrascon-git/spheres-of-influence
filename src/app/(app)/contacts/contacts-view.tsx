@@ -38,7 +38,7 @@ import { ContactAvatar, isGone, KeyStar, PersonaBadge, StatusBadge, TagChip } fr
 import { QualityIndicator, SingleSelect } from "@/components/fields";
 import { SearchBar } from "@/components/search-bar";
 import { FacetBar } from "@/components/facet-bar";
-import { DEFAULT_PERSONAS, DEFAULT_STATUSES, seniorityLabel } from "@/lib/constants";
+import { DEFAULT_STATUSES, PERSONA_CODES, seniorityLabel } from "@/lib/constants";
 import type { ContactListItem } from "@/lib/data";
 import type { ContactSearchResult } from "@/lib/contacts-query";
 import { highlightTerms, parseQuery, type Facets } from "@/lib/search/parse";
@@ -116,7 +116,7 @@ export function ContactsView({
   const accountName = useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
   const orgName = useMemo(() => new Map(orgs.map((o) => [o.id, o.name])), [orgs]);
   const tagById = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags]);
-  const personaOptions = fields.find((f) => f.key === "personas")?.options ?? DEFAULT_PERSONAS;
+  const personaOptions = fields.find((f) => f.key === "personas")?.options ?? PERSONA_CODES.map((p) => p.code);
   const statusOptions = fields.find((f) => f.key === "statuses")?.options ?? DEFAULT_STATUSES;
   const show = useMemo(() => {
     const m = new Map(fields.map((f) => [f.key, f.show_in_list]));

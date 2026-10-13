@@ -1,4 +1,33 @@
-import type { Confidence, Quality, Seniority } from "@/lib/constants";
+import type {
+  ChampionFlagValue,
+  Confidence,
+  DocTypeValue,
+  EntityTypeValue,
+  OrgFitValue,
+  PersonaStatusValue,
+  ProgramFitValue,
+  Quality,
+  ResearchConfidence,
+  Seniority,
+  SeniorityLevelValue,
+} from "@/lib/constants";
+
+/** A single sourced claim about a person, org or account, with its confidence. */
+export type Evidence = {
+  claim: string;
+  source_url?: string;
+  source_label?: string;
+  confidence: ResearchConfidence;
+};
+
+/** A cited source from the research corpus. */
+export type Source = { label: string; url: string };
+
+export type ProgramLink = {
+  code: string;
+  strength: "documented" | "inferred";
+  note?: string;
+};
 
 export type Account = {
   id: string;
@@ -32,6 +61,8 @@ export type Account = {
   sumble_data: Record<string, unknown>;
   sumble_fetched_at: string | null;
   custom_fields: Record<string, unknown>;
+  entity_type: EntityTypeValue | null;
+  out_of_scope: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -47,6 +78,10 @@ export type Org = {
   notes: string | null;
   color: string | null;
   sort_order: number;
+  factory_fit: OrgFitValue | null;
+  buying_role: string | null;
+  rank: number | null;
+  confidence: ResearchConfidence | null;
   created_at: string;
   updated_at: string;
 };
@@ -88,6 +123,16 @@ export type Contact = {
   phone: string | null;
   phone_quality: Quality | null;
   seniority: Seniority | null;
+  seniority_level: SeniorityLevelValue | null;
+  function_bucket: number | null;
+  persona_status: PersonaStatusValue | null;
+  champion_flag: ChampionFlagValue;
+  can_veto: boolean | null;
+  influence_score: number | null;
+  engage_stage: string | null;
+  buying_role: string | null;
+  evidence: Evidence[];
+  gaps: string[];
   is_key: boolean;
   key_reasoning: string | null;
   personas: string[];
@@ -114,6 +159,103 @@ export type Influence = {
   confidence: Confidence;
   evidence: string | null;
   source: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ResearchDoc = {
+  id: string;
+  account_id: string | null;
+  scope: "account" | "seller";
+  doc_type: DocTypeValue;
+  title: string;
+  body_html: string;
+  body_text: string;
+  source_file_path: string | null;
+  source_file_name: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Initiative = {
+  id: string;
+  account_id: string;
+  code: string;
+  name: string;
+  summary: string | null;
+  why_it_matters: string | null;
+  solving_for: string | null;
+  factory_fit: ProgramFitValue | null;
+  factory_hypothesis: string | null;
+  technologies: string[];
+  key_dates: { label: string; date: string }[];
+  rank: number | null;
+  confidence: ResearchConfidence | null;
+  sources: Source[];
+  doc_id: string | null;
+  notes: string | null;
+  custom_fields: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Challenge = {
+  id: string;
+  account_id: string;
+  code: string;
+  name: string;
+  summary: string | null;
+  why_it_matters: string | null;
+  impact: string | null;
+  entity: string | null;
+  factory_fit: ProgramFitValue | null;
+  factory_hypothesis: string | null;
+  key_dates: { label: string; date: string }[];
+  rank: number | null;
+  confidence: ResearchConfidence | null;
+  sources: Source[];
+  doc_id: string | null;
+  notes: string | null;
+  custom_fields: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A confidence-scored proposal awaiting human review; accepted ones write to the subject. */
+export type Inference = {
+  id: string;
+  subject_type: "contact" | "org" | "account" | "initiative" | "challenge";
+  subject_id: string;
+  kind:
+    | "persona"
+    | "seniority_level"
+    | "org_assignment"
+    | "key_person"
+    | "reporting_line"
+    | "initiative_link"
+    | "challenge_link"
+    | "field"
+    | "summary";
+  value: Record<string, unknown>;
+  confidence: ResearchConfidence;
+  evidence: Evidence[];
+  rationale: string | null;
+  status: "pending" | "accepted" | "rejected";
+  source: "research" | "import" | "ai" | "manual";
+  created_at: string;
+  resolved_at: string | null;
+};
+
+export type PersonaCatalogEntry = {
+  id: string;
+  code: string;
+  name: string;
+  definition: string | null;
+  one_liner: string | null;
+  weight: number;
+  can_veto: boolean;
+  meddpicc: string | null;
+  sort_order: number;
   created_at: string;
   updated_at: string;
 };
