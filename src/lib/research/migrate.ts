@@ -59,8 +59,12 @@ export const researchNameKey = (name: string) => nameTokens(name).join(" ");
 /** Exact domain, then exact name. Never variant-folds: research entities are distinct. */
 export function matchResearchAccount(
   account: { match_domains: string[]; match_names: string[] },
-  existing: ExistingAccountRow[],
+  existingRows: ExistingAccountRow[],
+  claimed: ReadonlySet<string> = new Set(),
 ): ExistingAccountRow | null {
+  // One imported account can stand for only one research entity; otherwise a
+  // subsidiary alias can overwrite the parent's fields and parent link.
+  const existing = existingRows.filter((a) => !claimed.has(a.id));
   const domains = new Set(account.match_domains.map((d) => normalizeDomain(d)).filter((d): d is string => !!d));
   if (domains.size) {
     const byDomain = existing.find((a) => a.domain && domains.has(normalizeDomain(a.domain)!));
@@ -247,7 +251,7 @@ export async function runResearchMigration(
       if (r.employee_count != null) patch.employee_count = r.employee_count;
       if (r.description) patch.description = r.description;
       if (r.notes) patch.notes = r.notes;
-      const match = matchResearchAccount(r, existingAccounts);
+      const match = matchResearchAccount(r, existingAccounts, new Set(accountIdByCode.values()));
       if (match) {
         const { error } = await supabase.from("accounts").update(patch).eq("id", match.id);
         if (error) throw new Error(`Account ${r.code}: ${error.message}`);

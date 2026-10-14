@@ -92,6 +92,21 @@ describe("matchResearchAccount", () => {
     // The bank must not collapse onto "American Express" the way import variants do.
     expect(matchResearchAccount(byName("AENB"), [axp])).toBeNull();
     expect(matchResearchAccount(byName("AMEX_CANADA"), [axp])).toBeNull();
+    expect(matchResearchAccount(byName("AMEX_INDIA"), [axp])).toBeNull();
+  });
+
+  it("never lets two research entities claim the same account", () => {
+    expect(matchResearchAccount(byName("AXP"), [axp], new Set(["axp"]))).toBeNull();
+  });
+
+  it("no research alias collapses onto another entity's name", () => {
+    const keys = new Map<string, string>();
+    for (const a of RESEARCH_ACCOUNTS)
+      for (const n of a.match_names) {
+        const k = researchNameKey(n);
+        expect(keys.get(k) ?? a.code, `${a.code} alias "${n}"`).toBe(a.code);
+        keys.set(k, a.code);
+      }
   });
 
   it("returns null when nothing matches", () => {

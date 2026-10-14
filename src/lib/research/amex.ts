@@ -223,7 +223,7 @@ export const RESEARCH_ACCOUNTS: ResearchAccount[] = [
     entity_type: "other_sub",
     out_of_scope: false,
     match_domains: [],
-    match_names: ["american express (india)", "american express india"],
+    match_names: ["american express india", "american express india pvt ltd"],
     domain: null,
     hq: "Gurugram, India",
     employee_count: null,
