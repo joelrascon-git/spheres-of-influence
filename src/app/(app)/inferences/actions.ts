@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
-import { applyInference, describeInferenceValue } from "@/lib/inference/apply";
+import { applyInference, describeInferenceValue, undoInferenceWrite, type UndoPayload } from "@/lib/inference/apply";
 import type { ActionResult } from "@/app/(app)/contacts/actions";
 import type { Inference } from "@/lib/types";
 
@@ -40,7 +40,7 @@ async function acceptWith(supabase: Supabase, id: string): Promise<ActionResult<
 
   const { error } = await supabase
     .from("inferences")
-    .update({ status: "accepted", resolved_at: new Date().toISOString() })
+    .update({ status: "accepted", resolved_at: new Date().toISOString(), undo: applied.undo })
     .eq("id", id)
     .eq("status", "pending");
   if (error) return { ok: false, error: error.message };
@@ -72,6 +72,40 @@ export async function rejectInference(id: string): Promise<ActionResult> {
     .select("subject_type, subject_id")
     .maybeSingle();
   if (inf) revalidateInferenceSurfaces(inf as Pick<Inference, "subject_type" | "subject_id">);
+  return { ok: true };
+}
+
+/**
+ * Reverts one accepted proposal: restores the pre-accept snapshot captured at
+ * write time, then returns the proposal to pending so it can be re-reviewed.
+ * The activity log keeps both halves of the audit trail.
+ */
+export async function undoInference(id: string): Promise<ActionResult> {
+  const { supabase } = await requireUser();
+  const { data: inf } = await supabase.from("inferences").select("*").eq("id", id).maybeSingle();
+  if (!inf) return { ok: false, error: "That proposal no longer exists." };
+  const row = inf as Inference;
+  if (row.status !== "accepted") return { ok: false, error: "Only accepted proposals can be undone." };
+  if (!row.undo) return { ok: false, error: "This acceptance predates undo, so there is no snapshot to restore." };
+
+  const undone = await undoInferenceWrite(supabase, row, row.undo as UndoPayload);
+  if (!undone.ok) return { ok: false, error: undone.error };
+
+  const { error } = await supabase
+    .from("inferences")
+    .update({ status: "pending", resolved_at: null, undo: null })
+    .eq("id", id)
+    .eq("status", "accepted");
+  if (error) return { ok: false, error: error.message };
+  await logActivity(
+    supabase,
+    row.subject_type,
+    row.subject_id,
+    "inference_undone",
+    { kind: row.kind, value: describeInferenceValue(row.kind, row.value), source: row.source },
+    "manual",
+  );
+  revalidateInferenceSurfaces(row);
   return { ok: true };
 }
 

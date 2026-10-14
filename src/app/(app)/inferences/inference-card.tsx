@@ -2,13 +2,13 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { Check, ExternalLink, X } from "lucide-react";
+import { Check, ExternalLink, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfidenceBadge } from "@/components/contact-bits";
 import type { Evidence } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { acceptInference, rejectInference } from "./actions";
+import { acceptInference, rejectInference, undoInference } from "./actions";
 
 export const KIND_LABELS: Record<string, string> = {
   persona: "Persona",
@@ -40,16 +40,21 @@ export type InferenceCardData = {
   subjectHref?: string | null;
   rationale: string | null;
   evidence: Evidence[];
+  /** Defaults to pending; accepted rows render Undo instead of Accept / Reject. */
+  status?: "pending" | "accepted" | "rejected";
+  /** True when an undo payload was captured at accept time. */
+  undoable?: boolean;
 };
 
-/** One pending proposal: what it would write, the evidence behind it, and accept/reject. */
+/** One proposal: what it would write, the evidence behind it, and the review action. */
 export function InferenceCard({ data, className }: { data: InferenceCardData; className?: string }) {
   const [pending, start] = useTransition();
-  const [gone, setGone] = useState<"accepted" | "rejected" | null>(null);
+  const [gone, setGone] = useState<"accepted" | "rejected" | "undone" | null>(null);
+  const status = data.status ?? "pending";
   if (gone)
     return (
       <p className={cn("rounded-lg border border-dashed px-4 py-3 text-xs text-muted-foreground", className)}>
-        {gone === "accepted" ? "Applied to the record." : "Rejected."}
+        {gone === "accepted" ? "Applied to the record." : gone === "undone" ? "Undone — back in the review queue." : "Rejected."}
       </p>
     );
 
@@ -93,41 +98,63 @@ export function InferenceCard({ data, className }: { data: InferenceCardData; cl
           )}
         </ul>
       )}
-      <div className="flex items-center gap-2 pt-0.5">
-        <Button
-          size="xs"
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const r = await acceptInference(data.id);
-              if (!r.ok) {
-                toast.error(r.error);
-                return;
-              }
-              setGone("accepted");
-            })
-          }
-        >
-          <Check className="size-3.5" /> Accept
-        </Button>
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const r = await rejectInference(data.id);
-              if (!r.ok) {
-                toast.error(r.error);
-                return;
-              }
-              setGone("rejected");
-            })
-          }
-        >
-          <X className="size-3.5" /> Reject
-        </Button>
-      </div>
+      {status === "pending" ? (
+        <div className="flex items-center gap-2 pt-0.5">
+          <Button
+            size="xs"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await acceptInference(data.id);
+                if (!r.ok) {
+                  toast.error(r.error);
+                  return;
+                }
+                setGone("accepted");
+              })
+            }
+          >
+            <Check className="size-3.5" /> Accept
+          </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await rejectInference(data.id);
+                if (!r.ok) {
+                  toast.error(r.error);
+                  return;
+                }
+                setGone("rejected");
+              })
+            }
+          >
+            <X className="size-3.5" /> Reject
+          </Button>
+        </div>
+      ) : status === "accepted" && data.undoable ? (
+        <div className="flex items-center gap-2 pt-0.5">
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await undoInference(data.id);
+                if (!r.ok) {
+                  toast.error(r.error);
+                  return;
+                }
+                setGone("undone");
+              })
+            }
+          >
+            <Undo2 className="size-3.5" /> Undo
+          </Button>
+        </div>
+      ) : null}
     </li>
   );
 }

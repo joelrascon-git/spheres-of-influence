@@ -260,16 +260,40 @@ export function describeInferenceValue(kind: Inference["kind"], value: Record<st
 
 // ───────────────────────── Apply (resolves against the database) ─────────────────────────
 
-export type ApplyResult = { ok: true; written: boolean } | { ok: false; error: string };
+/**
+ * What an acceptance overwrote, captured at write time so undo can restore
+ * exactly the pre-accept snapshot. `patch` restores prior column values;
+ * `delete_link` removes a link the acceptance created; `influence` restores or
+ * deletes an influence edge.
+ */
+export type UndoPayload =
+  | { type: "patch"; table: "contacts" | "accounts" | "orgs"; patch: Record<string, unknown> }
+  | { type: "delete_link"; program: "initiative" | "challenge"; contact_id: string; program_id: string }
+  | {
+      type: "influence";
+      from_contact_id: string;
+      to_contact_id: string;
+      existed: boolean;
+      prior: { strength: string; confidence: string; evidence: string | null; source: string } | null;
+    };
+
+export type ApplyResult =
+  | { ok: true; written: boolean; undo: UndoPayload | null }
+  | { ok: false; error: string };
 
 type ContactRow = { id: string; account_id: string | null; personas: string[]; statuses: string[]; persona_status: string | null };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The table a subject type writes to; inferences are polymorphic by design. */
+const tableFor = (subjectType: Inference["subject_type"]): "contacts" | "accounts" | "orgs" | null =>
+  subjectType === "contact" ? "contacts" : subjectType === "account" ? "accounts" : subjectType === "org" ? "orgs" : null;
+
 /**
  * Applies one reviewed proposal to its subject. Name-based resolutions are
  * scoped to the contact's account, and a name that matches nothing is an
- * error rather than a guess.
+ * error rather than a guess. The undo payload is the snapshot of what the
+ * write replaced, so accepting then undoing is lossless.
  */
 export async function applyInference(supabase: SupabaseClient, inf: InferenceLike): Promise<ApplyResult> {
   const res = writePlanFor(inf.subject_type, inf.kind, inf.value);
@@ -278,13 +302,21 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
 
   switch (plan.type) {
     case "none":
-      return { ok: true, written: false };
+      return { ok: true, written: false, undo: null };
 
     case "patch": {
-      const table = inf.subject_type === "contact" ? "contacts" : inf.subject_type === "account" ? "accounts" : inf.subject_type === "org" ? "orgs" : null;
+      const table = tableFor(inf.subject_type);
       if (!table) return { ok: false, error: `Cannot write to a ${inf.subject_type}.` };
+      const keys = Object.keys(plan.patch);
+      const { data: prior } = await supabase.from(table).select(keys.join(",")).eq("id", inf.subject_id).maybeSingle();
       const { error: e } = await supabase.from(table).update(plan.patch).eq("id", inf.subject_id);
-      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+      if (e) return { ok: false, error: e.message };
+      return {
+        ok: true,
+        written: true,
+        // A dynamic select types the row generically; the keys are allowlisted by writePlanFor.
+        undo: prior ? { type: "patch", table, patch: prior as unknown as Record<string, unknown> } : null,
+      };
     }
 
     case "array": {
@@ -302,10 +334,13 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
             ? current.filter((v) => !plan.values.includes(v))
             : plan.values;
       const patch: Record<string, unknown> = { [plan.field]: next };
-      if (plan.upgradePersonaStatus && (c.persona_status === null || c.persona_status === "assumed"))
-        patch.persona_status = "indicated";
+      const upgraded = plan.upgradePersonaStatus && (c.persona_status === null || c.persona_status === "assumed");
+      if (upgraded) patch.persona_status = "indicated";
       const { error: e } = await supabase.from("contacts").update(patch).eq("id", inf.subject_id);
-      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+      if (e) return { ok: false, error: e.message };
+      const undoPatch: Record<string, unknown> = { [plan.field]: current };
+      if (upgraded) undoPatch.persona_status = c.persona_status;
+      return { ok: true, written: true, undo: { type: "patch", table: "contacts", patch: undoPatch } };
     }
 
     case "record": {
@@ -318,15 +353,20 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
       // Details accumulate: a new favorite drink joins the birthday, it never replaces the record.
       const merged = { ...(c.personal_details ?? {}), ...plan.patch };
       const { error: e } = await supabase.from("contacts").update({ personal_details: merged }).eq("id", inf.subject_id);
-      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+      if (e) return { ok: false, error: e.message };
+      return {
+        ok: true,
+        written: true,
+        undo: { type: "patch", table: "contacts", patch: { personal_details: c.personal_details } },
+      };
     }
 
     case "org": {
       const { data: c } = (await supabase
         .from("contacts")
-        .select("id, account_id, personas, statuses, persona_status")
+        .select("id, account_id, org_id, personas, statuses, persona_status")
         .eq("id", inf.subject_id)
-        .maybeSingle()) as { data: ContactRow | null };
+        .maybeSingle()) as { data: ContactRow & { org_id: string | null } | null };
       if (!c) return { ok: false, error: "The subject contact no longer exists." };
       let orgId: string | null = null;
       if (UUID_RE.test(plan.org)) {
@@ -350,15 +390,22 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
       }
       if (!orgId) return { ok: false, error: `Org “${plan.org}” not found in this account — create it first.` };
       const { error: e } = await supabase.from("contacts").update({ org_id: orgId }).eq("id", inf.subject_id);
-      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+      if (e) return { ok: false, error: e.message };
+      return { ok: true, written: true, undo: { type: "patch", table: "contacts", patch: { org_id: c.org_id } } };
     }
 
     case "manager": {
       const { data: c } = (await supabase
         .from("contacts")
-        .select("id, account_id, personas, statuses, persona_status")
+        .select("id, account_id, reports_to_id, reports_to_confidence, reports_to_evidence, personas, statuses, persona_status")
         .eq("id", inf.subject_id)
-        .maybeSingle()) as { data: ContactRow | null };
+        .maybeSingle()) as {
+        data: ContactRow & {
+          reports_to_id: string | null;
+          reports_to_confidence: string | null;
+          reports_to_evidence: string | null;
+        } | null;
+      };
       if (!c) return { ok: false, error: "The subject contact no longer exists." };
       let managerId: string | null = null;
       if (UUID_RE.test(plan.name)) {
@@ -382,7 +429,20 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
           reports_to_evidence: evidenceTextOf(inf.evidence, inf.rationale),
         })
         .eq("id", inf.subject_id);
-      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+      if (e) return { ok: false, error: e.message };
+      return {
+        ok: true,
+        written: true,
+        undo: {
+          type: "patch",
+          table: "contacts",
+          patch: {
+            reports_to_id: c.reports_to_id,
+            reports_to_confidence: c.reports_to_confidence,
+            reports_to_evidence: c.reports_to_evidence,
+          },
+        },
+      };
     }
 
     case "program_link": {
@@ -403,6 +463,9 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
       if (!program) return { ok: false, error: `No ${plan.program} “${plan.code}” in this account.` };
       const linkTable = plan.program === "initiative" ? "contact_initiatives" : "contact_challenges";
       const fk = plan.program === "initiative" ? "initiative_id" : "challenge_id";
+      // An existing link means nothing changes, so there is nothing to undo.
+      const { data: existing } = await supabase.from(linkTable).select("contact_id").eq("contact_id", inf.subject_id).eq(fk, program.id).maybeSingle();
+      if (existing) return { ok: true, written: false, undo: null };
       const { error: e } = await supabase
         .from(linkTable)
         .upsert(
@@ -415,7 +478,12 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
           },
           { onConflict: "contact_id," + fk, ignoreDuplicates: true },
         );
-      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+      if (e) return { ok: false, error: e.message };
+      return {
+        ok: true,
+        written: true,
+        undo: { type: "delete_link", program: plan.program, contact_id: inf.subject_id, program_id: program.id },
+      };
     }
 
     case "influence": {
@@ -439,6 +507,14 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
         if (exact) toId = exact.id;
       }
       if (!toId) return { ok: false, error: `No contact named “${plan.to}” for the influence edge.` };
+      const { data: priorEdge } = (await supabase
+        .from("influences")
+        .select("strength, confidence, evidence, source")
+        .eq("from_contact_id", inf.subject_id)
+        .eq("to_contact_id", toId)
+        .maybeSingle()) as {
+        data: { strength: string; confidence: string; evidence: string | null; source: string } | null;
+      };
       const { error: e } = await supabase
         .from("influences")
         .upsert(
@@ -452,7 +528,66 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
           },
           { onConflict: "from_contact_id,to_contact_id" },
         );
-      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+      if (e) return { ok: false, error: e.message };
+      return {
+        ok: true,
+        written: true,
+        undo: {
+          type: "influence",
+          from_contact_id: inf.subject_id,
+          to_contact_id: toId,
+          existed: !!priorEdge,
+          prior: priorEdge,
+        },
+      };
+    }
+  }
+}
+
+/**
+ * Restores the pre-accept state captured in the undo payload. Snapshot
+ * semantics: undo puts back exactly what was there before the acceptance was
+ * applied, so undo before making further edits to the same fields.
+ */
+export async function undoInferenceWrite(
+  supabase: SupabaseClient,
+  inf: InferenceLike,
+  undo: UndoPayload,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  switch (undo.type) {
+    case "patch": {
+      const { error } = await supabase.from(undo.table).update(undo.patch).eq("id", inf.subject_id);
+      return error ? { ok: false, error: error.message } : { ok: true };
+    }
+    case "delete_link": {
+      const linkTable = undo.program === "initiative" ? "contact_initiatives" : "contact_challenges";
+      const fk = undo.program === "initiative" ? "initiative_id" : "challenge_id";
+      const { error } = await supabase.from(linkTable).delete().eq("contact_id", undo.contact_id).eq(fk, undo.program_id);
+      return error ? { ok: false, error: error.message } : { ok: true };
+    }
+    case "influence": {
+      if (undo.existed && undo.prior) {
+        const { error } = await supabase
+          .from("influences")
+          .upsert(
+            {
+              from_contact_id: undo.from_contact_id,
+              to_contact_id: undo.to_contact_id,
+              strength: undo.prior.strength,
+              confidence: undo.prior.confidence,
+              evidence: undo.prior.evidence,
+              source: undo.prior.source,
+            },
+            { onConflict: "from_contact_id,to_contact_id" },
+          );
+        return error ? { ok: false, error: error.message } : { ok: true };
+      }
+      const { error } = await supabase
+        .from("influences")
+        .delete()
+        .eq("from_contact_id", undo.from_contact_id)
+        .eq("to_contact_id", undo.to_contact_id);
+      return error ? { ok: false, error: error.message } : { ok: true };
     }
   }
 }

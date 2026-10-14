@@ -117,6 +117,8 @@ export default async function InferencesPage({ searchParams }: PageProps<"/infer
     subjectHref: labelById.get(r.subject_id)?.href ?? null,
     rationale: r.rationale,
     evidence: (r.evidence ?? []) as InferenceCardData["evidence"],
+    status: r.status,
+    undoable: r.status === "accepted" && !!r.undo,
   }));
 
   const statusCounts: Record<string, number | null> = {

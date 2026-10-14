@@ -243,6 +243,8 @@ export type Inference = {
   rationale: string | null;
   status: "pending" | "accepted" | "rejected";
   source: "research" | "import" | "ai" | "manual";
+  /** The pre-accept snapshot an undo restores; null when there was nothing to capture. */
+  undo: Record<string, unknown> | null;
   document_id: string | null;
   created_at: string;
   resolved_at: string | null;

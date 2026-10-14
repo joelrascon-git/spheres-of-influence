@@ -347,6 +347,20 @@ describe("ingestion schema", () => {
       expect(rows.rows).toHaveLength(1);
       expect(rows.rows[0]).toMatchObject({ document_id: null, status: "pending" });
     }));
+
+  it("stores the undo snapshot for accepted proposals", () =>
+    as(USER_A, async () => {
+      const undo = { type: "patch", table: "contacts", patch: { org_id: null } };
+      await db.exec(`
+        update public.inferences
+           set status = 'accepted', resolved_at = now(), undo = '${JSON.stringify(undo)}'::jsonb
+         where subject_id = '${BRIAN}' and kind = 'influence_edge'
+      `);
+      const row = await db.query<{ status: string; undo: { type: string } }>(
+        `select status, undo from public.inferences where subject_id = '${BRIAN}' and kind = 'influence_edge'`,
+      );
+      expect(row.rows[0]).toMatchObject({ status: "accepted", undo: { type: "patch" } });
+    }));
 });
 
 describe("import chunks", () => {
