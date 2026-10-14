@@ -86,3 +86,6 @@ and everyone else is left untouched.
 2. Canvas (React Flow) — org charts styled by rules, influence edges.
 3. AI (Claude) + Sumble enrichment + research docs + in-app assistant.
 4. Map (Mapbox), Evaboot API direct import, Vercel deploy.
+
+
+<!-- Trigger deployment -->
