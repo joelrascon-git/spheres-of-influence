@@ -180,21 +180,14 @@ export async function layoutWithElk(
     edges: edges.map((e) => ({ id: e.id, sources: e.sources, targets: e.targets })),
   })) as { id: string; x?: number; y?: number; width?: number; height?: number; children?: unknown[] };
 
-  const abs = new Map<string, ElkPosition>();
+  // ELK already reports every node's x/y relative to its containing node, which
+  // is the same convention React Flow uses for parentId children.
+  const out: Record<string, ElkPosition> = {};
+  const wanted = new Set(nodes.map((n) => n.id));
   const walk = (n: { id: string; x?: number; y?: number; width?: number; height?: number; children?: unknown[] }) => {
-    abs.set(n.id, { x: n.x ?? 0, y: n.y ?? 0, width: n.width ?? 0, height: n.height ?? 0 });
+    if (wanted.has(n.id)) out[n.id] = { x: n.x ?? 0, y: n.y ?? 0, width: n.width ?? 0, height: n.height ?? 0 };
     for (const c of (n.children ?? []) as Parameters<typeof walk>[0][]) walk(c);
   };
   walk(result);
-
-  const out: Record<string, ElkPosition> = {};
-  for (const n of nodes) {
-    const p = abs.get(n.id);
-    const parent = n.parentNode ? abs.get(n.parentNode) : undefined;
-    if (!p) continue;
-    out[n.id] = parent
-      ? { x: p.x - parent.x, y: p.y - parent.y, width: p.width, height: p.height }
-      : { x: p.x, y: p.y, width: p.width, height: p.height };
-  }
   return out;
 }

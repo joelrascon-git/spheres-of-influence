@@ -3,6 +3,7 @@ import {
   EMPTY_LAYOUT,
   defaultPeopleIds,
   hierarchyAccounts,
+  layoutWithElk,
   matchStyleRule,
   normalizeLayout,
   peopleIds,
@@ -147,5 +148,36 @@ describe("normalizeLayout", () => {
 
   it("handles null rows", () => {
     expect(normalizeLayout(null)).toEqual(EMPTY_LAYOUT);
+  });
+});
+
+describe("layoutWithElk", () => {
+  it("places group children inside their group, in group-relative coordinates", async () => {
+    const out = await layoutWithElk(
+      [
+        { id: "org:a", width: 320, height: 200, group: true },
+        { id: "org:b", width: 320, height: 200, group: true },
+        { id: "boss", width: 220, height: 78, parentNode: "org:a" },
+        { id: "report", width: 220, height: 78, parentNode: "org:a" },
+        { id: "peer", width: 220, height: 78, parentNode: "org:b" },
+        { id: "loose", width: 220, height: 78 },
+      ],
+      [
+        { id: "r1", sources: ["boss"], targets: ["report"] },
+        { id: "r2", sources: ["boss"], targets: ["peer"] },
+      ],
+    );
+    for (const [child, group] of [["boss", "org:a"], ["report", "org:a"], ["peer", "org:b"]] as const) {
+      const c = out[child];
+      const g = out[group];
+      expect(c.x).toBeGreaterThanOrEqual(0);
+      expect(c.y).toBeGreaterThanOrEqual(0);
+      expect(c.x + c.width).toBeLessThanOrEqual(g.width);
+      expect(c.y + c.height).toBeLessThanOrEqual(g.height);
+    }
+    // The org header padding keeps cards below the label.
+    expect(out.boss.y).toBeGreaterThanOrEqual(36);
+    expect(out.report.y).toBeGreaterThan(out.boss.y);
+    expect(out.loose).toBeDefined();
   });
 });

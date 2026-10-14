@@ -154,7 +154,7 @@ function AccountNode({ data, selected }: NodeProps) {
     <div
       className={`w-[230px] rounded-lg border bg-card p-2.5 shadow-sm ${selected ? "ring-2 ring-primary" : ""} ${a.out_of_scope ? "opacity-55 grayscale" : ""}`}
     >
-      <Handle type="target" position={Position.Top} className="!size-1.5 !border-0 !bg-muted-foreground" />
+      <Handle type="target" position={Position.Left} className="!size-1.5 !border-0 !bg-muted-foreground" />
       <p className="flex items-center gap-1.5 truncate text-xs font-semibold">
         <span className="truncate">{a.name}</span>
         {d.isRoot && <span className="shrink-0 rounded bg-primary/15 px-1 text-[10px] text-primary">This account</span>}
@@ -165,7 +165,7 @@ function AccountNode({ data, selected }: NodeProps) {
         {a.entity_type && <span className="rounded bg-accent px-1">{a.entity_type}</span>}
         {a.out_of_scope && <span className="rounded bg-red-500/15 px-1 text-red-400">Out of scope</span>}
       </div>
-      <Handle type="source" position={Position.Bottom} className="!size-1.5 !border-0 !bg-muted-foreground" />
+      <Handle type="source" position={Position.Right} className="!size-1.5 !border-0 !bg-muted-foreground" />
     </div>
   );
 }
@@ -196,6 +196,8 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
   const [search, setSearch] = useState("");
   const [autoLaying, setAutoLaying] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [legendOpen, setLegendOpen] = useState(false);
   const [added, setAdded] = useState<string[]>(layouts.people.added);
   const [hidden, setHidden] = useState<string[]>(layouts.people.hidden);
   const [overrides, setOverrides] = useState<
@@ -311,7 +313,8 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
             id: `acct:${a.id}`,
             source: a.parent_account_id!,
             target: a.id,
-            label: RELATIONSHIP_LABELS[a.parent_relationship],
+            // Centralized is the common case; labelling every edge buries the exceptions.
+            label: a.parent_relationship === "centralized" ? undefined : RELATIONSHIP_LABELS[a.parent_relationship],
             labelStyle: { fill: "#d6d3d1", fontSize: 10 },
             labelBgStyle: { fill: "#0c0a09", fillOpacity: 0.9 },
             labelBgPadding: [4, 2] as [number, number],
@@ -365,7 +368,8 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
             if (a.parent_account_id && accounts.some((p) => p.id === a.parent_account_id))
               edgeSpecs.push({ id: `a:${a.id}`, sources: [a.parent_account_id], targets: [a.id] });
         }
-        const laid = await layoutWithElk(specs, edgeSpecs);
+        // Entity families are wide and shallow, so they read better left to right.
+        const laid = await layoutWithElk(specs, edgeSpecs, view === "hierarchy" ? "RIGHT" : "DOWN");
         for (const [id, p] of Object.entries(laid)) {
           positionsRef.current[id] = { x: p.x, y: p.y };
           if (id.startsWith("org:")) orgSizesRef.current[id.slice(4)] = { w: p.width, h: p.height };
@@ -573,6 +577,18 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
           <Button size="sm" variant="outline" disabled={autoLaying} onClick={() => void runAutoLayout(true)}>
             {autoLaying ? "Laying out…" : "Auto-layout"}
           </Button>
+          {view === "people" && (
+            <Button
+              size="sm"
+              variant={panelOpen ? "secondary" : "outline"}
+              onClick={() => {
+                setPanelOpen((o) => !o);
+                setTimeout(() => void fitView({ padding: 0.15, duration: 300 }), 50);
+              }}
+            >
+              <Plus className="size-3.5" /> {panelOpen ? "Hide people list" : "Add people"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -681,15 +697,37 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
           )}
 
           {/* Legend */}
-          <div className="absolute bottom-3 right-3 z-10 w-56 rounded-lg border bg-card/95 p-2.5 text-[11px] shadow-lg">
-            <p className="mb-1.5 font-semibold">Edges</p>
+          {!legendOpen ? (
+            <button
+              type="button"
+              onClick={() => setLegendOpen(true)}
+              className="absolute right-3 top-3 z-10 rounded-lg border bg-card/95 px-2.5 py-1 text-[11px] font-semibold shadow-lg hover:bg-accent"
+            >
+              Legend
+            </button>
+          ) : (
+          <div className="absolute right-3 top-3 z-10 w-56 rounded-lg border bg-card/95 p-2.5 text-[11px] shadow-lg">
+            <div className="mb-1.5 flex items-center justify-between">
+              <p className="font-semibold">Edges</p>
+              <button type="button" aria-label="Close legend" onClick={() => setLegendOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="size-3.5" />
+              </button>
+            </div>
+            {view === "hierarchy" ? (
+              <ul className="space-y-1 text-muted-foreground">
+                <li><span className="mr-1 inline-block w-6 border-t border-muted-foreground align-middle" /> Parent → subsidiary</li>
+                <li>Unlabeled lines mean centralized procurement; other relationships are labeled.</li>
+                <li>Greyed cards are out of scope.</li>
+              </ul>
+            ) : (
             <ul className="space-y-1 text-muted-foreground">
               <li><span className="mr-1 inline-block w-6 border-t border-muted-foreground align-middle" /> Reporting — confirmed</li>
               <li><span className="mr-1 inline-block w-6 border-t border-dashed border-muted-foreground align-middle" style={{ borderStyle: "dashed" }} /> Reporting — medium</li>
               <li><span className="mr-1 inline-block w-6 border-t border-muted-foreground align-middle" style={{ borderTopStyle: "dotted" }} /> Reporting — low</li>
               <li><span className="mr-1 inline-block w-6 border-t align-middle" style={{ borderColor: INFLUENCE_COLOR }} /> Influence</li>
             </ul>
-            {statusCounts.length > 0 && (
+            )}
+            {view === "people" && statusCounts.length > 0 && (
               <>
                 <p className="mb-1.5 mt-2.5 font-semibold">On-canvas status</p>
                 <ul className="space-y-1 text-muted-foreground">
@@ -707,10 +745,11 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
               </>
             )}
           </div>
+          )}
         </div>
 
         {/* Side panel: everyone not on the canvas yet */}
-        {view === "people" && (
+        {view === "people" && panelOpen && (
           <aside className="flex w-72 shrink-0 flex-col border-l bg-card/40">
             <div className="border-b p-2.5">
               <input
