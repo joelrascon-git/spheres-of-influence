@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Users } from "lucide-react";
+import { ArrowLeft, Network, Users } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NotesPanel } from "@/app/(app)/contacts/[id]/contact-panels";
@@ -155,6 +155,13 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
         }
         actions={
           <>
+            <Link
+              href={`/accounts/${account.id}/canvas`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 text-sm font-medium text-primary hover:bg-primary/20"
+              title="Drag-and-drop org chart and entity map"
+            >
+              <Network className="size-3.5" /> Canvas
+            </Link>
             <Link
               href={`/contacts?account=${account.id}`}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium hover:bg-muted"
