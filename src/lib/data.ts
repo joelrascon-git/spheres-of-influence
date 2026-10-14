@@ -41,7 +41,24 @@ export type ContactListItem = Pick<
   | "linkedin_uid"
 >;
 
-export type ContactRef = Pick<Contact, "id" | "full_name" | "title" | "avatar_path" | "account_id" | "statuses">;
+/** Columns every contact chip, hover card and picker needs; one string so surfaces never drift. */
+export const CONTACT_REF_COLUMNS =
+  "id, full_name, title, avatar_path, account_id, statuses, seniority_level, personas, persona_status, influence_score, is_key";
+
+export type ContactRef = Pick<
+  Contact,
+  | "id"
+  | "full_name"
+  | "title"
+  | "avatar_path"
+  | "account_id"
+  | "statuses"
+  | "seniority_level"
+  | "personas"
+  | "persona_status"
+  | "influence_score"
+  | "is_key"
+>;
 
 export async function listAccounts(supabase: SupabaseClient) {
   const { data } = await supabase.from("accounts").select("*").order("name");
@@ -82,7 +99,7 @@ export async function getContact(supabase: SupabaseClient, id: string) {
 /** Light refs for every contact in the given accounts, for pickers (reports-to, influence). */
 export async function listContactRefs(supabase: SupabaseClient, accountIds?: (string | null)[]) {
   const ids = (accountIds ?? []).filter(Boolean) as string[];
-  let q = supabase.from("contacts").select("id, full_name, title, avatar_path, account_id, statuses").order("last_name").limit(10000);
+  let q = supabase.from("contacts").select(CONTACT_REF_COLUMNS).order("last_name").limit(10000);
   if (ids.length) q = q.in("account_id", ids);
   const { data } = await q;
   return (data ?? []) as ContactRef[];
@@ -94,7 +111,7 @@ export async function getContactRelations(supabase: SupabaseClient, id: string) 
     supabase.from("contact_tags").select("tag_id").eq("contact_id", id),
     supabase.from("influences").select("*").eq("from_contact_id", id),
     supabase.from("influences").select("*").eq("to_contact_id", id),
-    supabase.from("contacts").select("id, full_name, title, avatar_path, account_id, statuses").eq("reports_to_id", id).order("last_name"),
+    supabase.from("contacts").select(CONTACT_REF_COLUMNS).eq("reports_to_id", id).order("last_name"),
   ]);
   return {
     notes: (notes.data ?? []) as Note[],

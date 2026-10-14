@@ -21,6 +21,7 @@ import {
 import { CONFIDENCE, SENIORITY, SENIORITY_LEVELS, PERSONA_STATUS, CHAMPION_FLAG, ENGAGE_STAGES } from "@/lib/constants";
 import { describeInferenceValue } from "@/lib/inference/apply";
 import { InferenceCard } from "@/app/(app)/inferences/inference-card";
+import { ContactHoverCard } from "@/components/contact-hover-card";
 import type { ContactRef } from "@/lib/data";
 import type { Place } from "@/lib/geocode";
 import type { Contact, FieldDefinition, Inference, Note, Tag } from "@/lib/types";
@@ -249,6 +250,8 @@ export function ReportsToPanel({
   candidates: ContactRef[];
 }) {
   const { save } = useSave(contact.id);
+  const manager = candidates.find((c) => c.id === contact.reports_to_id) ?? null;
+  const [editing, setEditing] = useState(!contact.reports_to_id);
   const managerOptions = candidates
     .filter((c) => c.id !== contact.id)
     .map((c) => ({ value: c.id, label: c.full_name, hint: c.title ?? undefined }));
@@ -256,16 +259,41 @@ export function ReportsToPanel({
   return (
     <section className="space-y-2.5 rounded-lg border bg-card p-4">
       <h2 className="text-sm font-semibold">Reporting line</h2>
-      <div className={rowClass}>
+      <div className={cn(rowClass, "items-center")}>
         <span className={labelClass}>Reports to</span>
-        <SingleSelect
-          className="flex-1"
-          options={managerOptions}
-          value={contact.reports_to_id}
-          placeholder="Pick a manager…"
-          onChange={(v) => save({ reports_to_id: v })}
-          searchable
-        />
+        {manager && !editing ? (
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <ContactHoverCard contact={manager}>
+              <a
+                href={`/contacts/${manager.id}`}
+                className="flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs hover:bg-accent"
+              >
+                <ContactAvatar name={manager.full_name} path={manager.avatar_path} size={16} />
+                <span className="truncate font-medium">{manager.full_name}</span>
+                {manager.title && <span className="truncate text-muted-foreground">· {manager.title}</span>}
+              </a>
+            </ContactHoverCard>
+            <button
+              type="button"
+              className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline"
+              onClick={() => setEditing(true)}
+            >
+              Change
+            </button>
+          </div>
+        ) : (
+          <SingleSelect
+            className="flex-1"
+            options={managerOptions}
+            value={contact.reports_to_id}
+            placeholder="Pick a manager…"
+            onChange={(v) => {
+              save({ reports_to_id: v });
+              setEditing(false);
+            }}
+            searchable
+          />
+        )}
       </div>
       {contact.reports_to_id && (
         <>
@@ -297,14 +325,17 @@ export function ReportsToPanel({
           </p>
           <ul className="flex flex-wrap gap-1.5">
             {directReports.map((r) => (
-              <li key={r.id}>
-                <a
-                  href={`/contacts/${r.id}`}
-                  className="flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs hover:bg-accent"
-                >
-                  <ContactAvatar name={r.full_name} path={r.avatar_path} size={16} />
-                  {r.full_name}
-                </a>
+              <li key={r.id} className="min-w-0">
+                <ContactHoverCard contact={r}>
+                  <a
+                    href={`/contacts/${r.id}`}
+                    className="flex max-w-[280px] items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs hover:bg-accent"
+                  >
+                    <ContactAvatar name={r.full_name} path={r.avatar_path} size={16} />
+                    <span className="truncate font-medium">{r.full_name}</span>
+                    {r.title && <span className="truncate text-muted-foreground">· {r.title}</span>}
+                  </a>
+                </ContactHoverCard>
               </li>
             ))}
           </ul>
@@ -319,6 +350,7 @@ export type InfluenceEdge = {
   contactId: string;
   name: string;
   title: string | null;
+  contact: ContactRef | null;
   strength: string;
   confidence: string;
   evidence: string | null;
@@ -339,9 +371,17 @@ function InfluenceRow({ dir, e, onDelete }: { dir: "out" | "in"; e: InfluenceEdg
         <ArrowLeft className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
       )}
       <div className="min-w-0 flex-1">
-        <a href={`/contacts/${e.contactId}`} className="font-medium hover:underline">
-          {e.name}
-        </a>
+        {e.contact ? (
+          <ContactHoverCard contact={e.contact}>
+            <a href={`/contacts/${e.contactId}`} className="font-medium hover:underline">
+              {e.name}
+            </a>
+          </ContactHoverCard>
+        ) : (
+          <a href={`/contacts/${e.contactId}`} className="font-medium hover:underline">
+            {e.name}
+          </a>
+        )}
         {e.title && <span className="text-xs text-muted-foreground"> · {e.title}</span>}
         <span className="text-xs text-muted-foreground">
           {" "}

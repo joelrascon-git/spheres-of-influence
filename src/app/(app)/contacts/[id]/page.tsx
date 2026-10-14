@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/auth";
 import { integrations } from "@/lib/env";
 import { CHAMPION_FLAG, DEFAULT_STATUSES, PERSONA_CODES, seniorityLabel } from "@/lib/constants";
 import {
+  CONTACT_REF_COLUMNS,
   getContact,
   getContactRelations,
   getFieldDefs,
@@ -118,7 +119,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
   if (missingIds.length > 0) {
     const { data } = await supabase
       .from("contacts")
-      .select("id, full_name, title, avatar_path, account_id, statuses")
+      .select(CONTACT_REF_COLUMNS)
       .in("id", missingIds);
     refs.push(...((data ?? []) as ContactRef[]));
   }
@@ -133,6 +134,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
       contactId: i.to_contact_id,
       name: target?.full_name ?? "Unknown contact",
       title: target?.title ?? null,
+      contact: target ?? null,
       strength: i.strength,
       confidence: i.confidence,
       evidence: i.evidence,
@@ -145,6 +147,7 @@ export default async function ContactPage({ params }: PageProps<"/contacts/[id]"
       contactId: i.from_contact_id,
       name: source?.full_name ?? "Unknown contact",
       title: source?.title ?? null,
+      contact: source ?? null,
       strength: i.strength,
       confidence: i.confidence,
       evidence: i.evidence,
