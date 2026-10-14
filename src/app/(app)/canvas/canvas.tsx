@@ -22,25 +22,33 @@ import {
   type NodeTypes,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronDown, LayoutGrid, Network, Plus, X } from "lucide-react";
+import { ChevronDown, Crosshair, LayoutGrid, Network, Plus, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { SingleSelect } from "@/components/fields";
+import { MultiSelect, SingleSelect } from "@/components/fields";
 import { ContactAvatar, KeyStar, PersonaBadge, StatusBadge } from "@/components/contact-bits";
 import { ContactHoverCard } from "@/components/contact-hover-card";
 import { CONFIDENCE } from "@/lib/constants";
 import {
+  DEFAULT_FILTERS,
+  LINE_KINDS,
+  applyCanvasFilters,
+  enclosingGroupSize,
+  filtersActive,
   layoutWithElk,
   matchStyleRule,
   peopleIds,
   reportingEdgeStyle,
+  reportingLineKind,
+  type CanvasFilters,
   type CanvasView,
   type LayoutEdgeSpec,
   type LayoutNodeSpec,
+  type LineKind,
 } from "@/lib/canvas/graph";
 import type { ContactListItem } from "@/lib/data";
 import type { StyleRule } from "@/lib/types";
-import type { CanvasAccount, CanvasOrg } from "./page";
+import type { AccountChoice, CanvasAccount, CanvasOrg } from "./page";
 import { saveCanvasLayout } from "./actions";
 
 // ───────────────────────── Data shapes ─────────────────────────
@@ -69,6 +77,10 @@ export type CanvasNode = Node<CanvasNodeData>;
 type CanvasProps = {
   accountId: string;
   accountName: string;
+  /** Every account, for the account picker. */
+  accountChoices: AccountChoice[];
+  /** The selected account and the entities beneath it, for the account filter. */
+  sphereAccounts: CanvasAccount[];
   contacts: ContactListItem[];
   orgs: CanvasOrg[];
   accounts: CanvasAccount[];
@@ -88,6 +100,13 @@ const RELATIONSHIP_LABELS: Record<CanvasAccount["parent_relationship"], string> 
   semi_autonomous: "Semi-autonomous",
   independent: "Independent",
   unknown: "Unknown",
+};
+const LINE_LABELS: Record<LineKind, string> = {
+  confirmed: "Confirmed",
+  medium: "Medium",
+  low: "Low",
+  unrated: "Unrated",
+  influence: "Influence",
 };
 
 // ───────────────────────── Custom nodes ─────────────────────────
@@ -182,7 +201,18 @@ export function AccountCanvas(props: CanvasProps) {
   );
 }
 
-function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influences, styleRules, layouts }: CanvasProps) {
+function CanvasInner({
+  accountId,
+  accountName,
+  accountChoices,
+  sphereAccounts,
+  contacts,
+  orgs,
+  accounts,
+  influences,
+  styleRules,
+  layouts,
+}: CanvasProps) {
   const router = useRouter();
   const { screenToFlowPosition, fitView } = useReactFlow();
 
@@ -204,14 +234,30 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
     Record<string, { reports_to_id?: string | null; reports_to_confidence?: "confirmed" | "medium" | "low" | null }>
   >({});
 
+  const [filters, setFilters] = useState<CanvasFilters>(DEFAULT_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtering = view === "people" && filtersActive(filters);
+
+  // Saved arrangement vs. a throwaway one: a filtered view gets its own compact
+  // auto-layout and never overwrites the seller's saved positions.
   const positionsRef = useRef<Record<string, { x: number; y: number }>>({ ...layouts.people.positions });
-  const orgSizesRef = useRef<Record<string, { w: number; h: number }>>({});
+  const filteredPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
+  const posStore = useCallback(() => (filtering ? filteredPositionsRef.current : positionsRef.current), [filtering]);
   const nodesRef = useRef<CanvasNode[]>([]);
+  const membershipRef = useRef({ added, hidden });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fittedRef = useRef<CanvasView | null>(null);
+  const fittedRef = useRef<string | null>(null);
   useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
+  useEffect(() => {
+    membershipRef.current = { added, hidden };
+  }, [added, hidden]);
+
+  const updateFilters = useCallback((patch: Partial<CanvasFilters>) => {
+    filteredPositionsRef.current = {};
+    setFilters((f) => ({ ...f, ...patch }));
+  }, []);
 
   const contactById = useMemo(() => new Map(contacts.map((c) => [c.id, c])), [contacts]);
   const orgById = useMemo(() => new Map(orgs.map((o) => [o.id, o])), [orgs]);
@@ -229,10 +275,18 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
     [overrides],
   );
 
+  /** The saved People-view set, before filters. */
+  const canvasIds = useMemo(() => peopleIds(contacts, influences, { added, hidden }), [contacts, influences, added, hidden]);
+
   const shownIds = useMemo(
-    () => (view === "people" ? peopleIds(contacts, influences, { added, hidden }) : new Set(accounts.map((a) => a.id))),
-    [view, contacts, influences, added, hidden, accounts],
+    () =>
+      view === "people"
+        ? applyCanvasFilters(contacts.map(effective), influences, canvasIds, filters)
+        : new Set(accounts.map((a) => a.id)),
+    [view, contacts, effective, influences, canvasIds, filters, accounts],
   );
+
+  const lineVisible = useCallback((kind: LineKind) => filters.lines[kind], [filters.lines]);
 
   // ── Build nodes and edges for the current view ──
   useEffect(() => {
@@ -244,15 +298,19 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
         membersByOrg.set(c.org_id, (membersByOrg.get(c.org_id) ?? 0) + 1);
       }
 
+      const store = posStore();
       const nextNodes: CanvasNode[] = [];
       for (const [orgId, count] of membersByOrg) {
         const o = orgById.get(orgId);
         if (!o) continue;
-        const size = orgSizesRef.current[orgId] ?? { w: 320, h: 200 };
+        const size = enclosingGroupSize(
+          shown.filter((c) => c.org_id === orgId && store[c.id]).map((c) => store[c.id]),
+          { w: CARD_W, h: CARD_H },
+        );
         nextNodes.push({
           id: `org:${orgId}`,
           type: "org",
-          position: positionsRef.current[`org:${orgId}`] ?? { x: 0, y: 0 },
+          position: store[`org:${orgId}`] ?? { x: 0, y: 0 },
           data: { kind: "org", name: o.name, count, collapsed: collapsedOrgs.includes(orgId) },
           style: { width: size.w, height: size.h },
         });
@@ -267,7 +325,7 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
         nextNodes.push({
           id: c.id,
           type: "contact",
-          position: positionsRef.current[c.id] ?? { x: 0, y: 0 },
+          position: store[c.id] ?? { x: 0, y: 0 },
           data: { kind: "contact", contact: c, orgName: c.org_id ? (orgById.get(c.org_id)?.name ?? null) : null, rule: rule?.style ?? null, statusDots },
           parentId: c.org_id ? `org:${c.org_id}` : undefined,
           hidden: !!c.org_id && collapsedOrgs.includes(c.org_id),
@@ -278,6 +336,7 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
       for (const raw of shown) {
         const c = effective(raw);
         if (!c.reports_to_id || !shownIds.has(c.reports_to_id)) continue;
+        if (!lineVisible(reportingLineKind(c.reports_to_confidence))) continue;
         nextEdges.push({
           id: `report:${c.id}`,
           source: c.reports_to_id,
@@ -286,7 +345,7 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
         });
       }
       for (const e of influences) {
-        if (!shownIds.has(e.from_contact_id) || !shownIds.has(e.to_contact_id)) continue;
+        if (!lineVisible("influence") || !shownIds.has(e.from_contact_id) || !shownIds.has(e.to_contact_id)) continue;
         nextEdges.push({
           id: `infl:${e.from_contact_id}:${e.to_contact_id}`,
           source: e.from_contact_id,
@@ -324,12 +383,14 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
           })),
       );
     }
-  }, [view, contacts, influences, accounts, accountId, orgs, orgById, styleRules, shownIds, collapsedOrgs, effective, setNodes, setEdges]);
+  }, [view, contacts, influences, accounts, accountId, orgs, orgById, styleRules, shownIds, collapsedOrgs, effective, posStore, lineVisible, setNodes, setEdges]);
 
   // ── Persistence ──
   const doSave = useCallback(
-    async (v: CanvasView, a: string[], h: string[]) => {
+    async (v: CanvasView) => {
       setSaveState("saving");
+      // Membership only belongs to the People view; the map keeps its own lists empty.
+      const { added: a, hidden: h } = v === "people" ? membershipRef.current : { added: [], hidden: [] };
       const r = await saveCanvasLayout(accountId, v, { positions: positionsRef.current, added: a, hidden: h });
       setSaveState(r.ok ? "saved" : "error");
       if (!r.ok) toast.error(r.error);
@@ -337,10 +398,12 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
     [accountId],
   );
 
+  // Reads membership from a ref when the timer fires, so a save scheduled right
+  // after an add/remove includes it.
   const scheduleSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => void doSave(view, added, hidden), 700);
-  }, [doSave, view, added, hidden]);
+    saveTimer.current = setTimeout(() => void doSave(view), 700);
+  }, [doSave, view]);
 
   // ── Auto-layout ──
   const runAutoLayout = useCallback(
@@ -356,11 +419,13 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
           for (const c of shown)
             specs.push({ id: c.id, width: CARD_W, height: CARD_H, parentNode: c.org_id ? `org:${c.org_id}` : undefined });
           for (const raw of shown) {
-            const m = effective(raw).reports_to_id;
-            if (m && shownIds.has(m)) edgeSpecs.push({ id: `r:${raw.id}`, sources: [m], targets: [raw.id] });
+            const c = effective(raw);
+            const m = c.reports_to_id;
+            if (m && shownIds.has(m) && lineVisible(reportingLineKind(c.reports_to_confidence)))
+              edgeSpecs.push({ id: `r:${raw.id}`, sources: [m], targets: [raw.id] });
           }
           for (const e of influences)
-            if (shownIds.has(e.from_contact_id) && shownIds.has(e.to_contact_id))
+            if (lineVisible("influence") && shownIds.has(e.from_contact_id) && shownIds.has(e.to_contact_id))
               edgeSpecs.push({ id: `i:${e.from_contact_id}:${e.to_contact_id}`, sources: [e.from_contact_id], targets: [e.to_contact_id] });
         } else {
           for (const a of accounts) specs.push({ id: a.id, width: ACC_W, height: ACC_H });
@@ -370,29 +435,29 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
         }
         // Entity families are wide and shallow, so they read better left to right.
         const laid = await layoutWithElk(specs, edgeSpecs, view === "hierarchy" ? "RIGHT" : "DOWN");
-        for (const [id, p] of Object.entries(laid)) {
-          positionsRef.current[id] = { x: p.x, y: p.y };
-          if (id.startsWith("org:")) orgSizesRef.current[id.slice(4)] = { w: p.width, h: p.height };
-        }
+        const store = posStore();
+        for (const [id, p] of Object.entries(laid)) store[id] = { x: p.x, y: p.y };
         // Rebuild with the new positions.
         setCollapsedOrgs((s) => [...s]);
         if (fit) setTimeout(() => void fitView({ padding: 0.15, duration: 400 }), 50);
-        scheduleSave();
+        if (!filtering) scheduleSave();
       } catch {
         toast.error("Auto-layout failed. Try again or place people manually.");
       } finally {
         setAutoLaying(false);
       }
     },
-    [view, contacts, shownIds, influences, accounts, effective, fitView, scheduleSave],
+    [view, contacts, shownIds, influences, accounts, effective, fitView, scheduleSave, posStore, filtering, lineVisible],
   );
 
-  // First visit to a view with no saved positions: lay it out automatically.
+  // A view (or a new filter combination) with unplaced nodes: lay it out and fit once.
   useEffect(() => {
     if (autoLaying) return;
-    const missing = nodesRef.current.filter((n) => !positionsRef.current[n.id]);
-    if (nodes.length && missing.length) void runAutoLayout(fittedRef.current !== view);
-    if (nodes.length) fittedRef.current = view;
+    const fitKey = filtering ? `${view}:${JSON.stringify(filters)}` : view;
+    const store = posStore();
+    const missing = nodesRef.current.filter((n) => !store[n.id]);
+    if (nodes.length && missing.length) void runAutoLayout(fittedRef.current !== fitKey);
+    if (nodes.length) fittedRef.current = fitKey;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rebuild-driven; runAutoLayout identity would loop
   }, [nodes, view]);
 
@@ -413,8 +478,8 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
 
   const onNodeDragStop = useCallback(
     (_e: unknown, node: CanvasNode) => {
-      positionsRef.current[node.id] = { x: node.position.x, y: node.position.y };
-      scheduleSave();
+      posStore()[node.id] = { x: node.position.x, y: node.position.y };
+      if (!filtering) scheduleSave();
       if (view !== "people" || node.type !== "contact") return;
       // Dropping one contact onto another sets a reporting line — after confirmation.
       const w = node.measured?.width ?? CARD_W;
@@ -433,7 +498,7 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
         }
       }
     },
-    [scheduleSave, view, absolutePos],
+    [scheduleSave, view, absolutePos, posStore, filtering],
   );
 
   const confirmDrop = useCallback(async () => {
@@ -480,13 +545,14 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
   const switchView = useCallback(
     (v: CanvasView) => {
       if (v === view) return;
-      void doSave(view, added, hidden); // keep the arrangement we just left
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      void doSave(view); // keep the arrangement we just left
       positionsRef.current = { ...layouts[v].positions };
       setView(v);
       setSelectedId(null);
       setPendingDrop(null);
     },
-    [view, doSave, added, hidden, layouts],
+    [view, doSave, layouts],
   );
 
   const toggleCollapse = useCallback((orgNodeId: string) => {
@@ -525,10 +591,46 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
   const panelContacts = useMemo(() => {
     const q = search.trim().toLowerCase();
     return contacts
-      .filter((c) => !shownIds.has(c.id))
+      .filter((c) => !canvasIds.has(c.id))
       .filter((c) => !q || c.full_name.toLowerCase().includes(q) || (c.title ?? "").toLowerCase().includes(q))
       .sort((a, b) => (b.influence_score ?? 0) - (a.influence_score ?? 0) || a.last_name.localeCompare(b.last_name));
-  }, [contacts, shownIds, search]);
+  }, [contacts, canvasIds, search]);
+
+  // ── Filter options (only choices that would show someone) ──
+  const filterOptions = useMemo(() => {
+    const byAccount = new Map<string, number>();
+    const byOrg = new Map<string, number>();
+    for (const c of contacts) {
+      if (c.account_id) byAccount.set(c.account_id, (byAccount.get(c.account_id) ?? 0) + 1);
+      if (c.org_id) byOrg.set(c.org_id, (byOrg.get(c.org_id) ?? 0) + 1);
+    }
+    const accountName = new Map(sphereAccounts.map((a) => [a.id, a.name]));
+    const multiEntity = new Set(orgs.filter((o) => byOrg.has(o.id)).map((o) => o.account_id)).size > 1;
+    return {
+      accounts: sphereAccounts
+        .filter((a) => byAccount.has(a.id))
+        .map((a) => ({ value: a.id, label: `${a.name} (${byAccount.get(a.id)})` })),
+      orgs: orgs
+        .filter((o) => byOrg.has(o.id))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((o) => ({
+          value: o.id,
+          label: `${o.name}${multiEntity ? ` · ${accountName.get(o.account_id) ?? ""}` : ""} (${byOrg.get(o.id)})`,
+        })),
+      people: [...contacts]
+        .sort((a, b) => a.full_name.localeCompare(b.full_name))
+        .map((c) => ({ value: c.id, label: c.title ? `${c.full_name} · ${c.title}` : c.full_name })),
+    };
+  }, [contacts, orgs, sphereAccounts]);
+
+  const activeFilterCount =
+    (filters.accountIds.length ? 1 : 0) +
+    (filters.orgIds.length ? 1 : 0) +
+    (filters.focusId ? 1 : 0) +
+    (LINE_KINDS.some((k) => !filters.lines[k]) ? 1 : 0) +
+    (filters.everyone ? 1 : 0) +
+    (filters.connectedOnly ? 1 : 0);
+  const focusPerson = filters.focusId ? contactById.get(filters.focusId) : null;
 
   const statusCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -545,10 +647,17 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
     <div className="flex h-screen flex-col">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 border-b bg-background px-4 py-2.5">
-        <Link href={`/accounts/${accountId}`} className="flex items-center gap-1.5 text-sm font-semibold hover:underline">
-          ← {accountName}
+        <SingleSelect
+          className="w-64"
+          searchable
+          allowClear={false}
+          options={accountChoices.map((a) => ({ value: a.id, label: a.out_of_scope ? `${a.name} (out of scope)` : a.name }))}
+          value={accountId}
+          onChange={(v) => v && v !== accountId && router.push(`/canvas?account=${v}`)}
+        />
+        <Link href={`/accounts/${accountId}`} className="text-xs text-muted-foreground hover:text-foreground hover:underline" title={`Open ${accountName}`}>
+          Open account
         </Link>
-        <span className="text-muted-foreground">canvas</span>
         <div className="ml-2 flex rounded-md border p-0.5">
           <button
             type="button"
@@ -567,9 +676,20 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
         </div>
         <span className="text-xs text-muted-foreground">
           {view === "people"
-            ? `${shownIds.size} on canvas · drag one onto another to set a reporting line · click an org to collapse`
+            ? filtering
+              ? `Showing ${shownIds.size} of ${contacts.length} people (filtered)`
+              : `${shownIds.size} on canvas · drag one onto another to set a reporting line · click an org to collapse`
             : `${accounts.length} entities`}
         </span>
+        {view === "people" && (
+          <Button
+            size="sm"
+            variant={filtersOpen || activeFilterCount ? "secondary" : "outline"}
+            onClick={() => setFiltersOpen((o) => !o)}
+          >
+            <SlidersHorizontal className="size-3.5" /> Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
+          </Button>
+        )}
         <div className="ml-auto flex items-center gap-2">
           {saveState === "saving" && <span className="text-xs text-muted-foreground">Saving…</span>}
           {saveState === "saved" && <span className="text-xs text-muted-foreground">Saved</span>}
@@ -591,6 +711,99 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
           )}
         </div>
       </div>
+
+      {/* Filters */}
+      {view === "people" && filtersOpen && (
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-2.5 border-b bg-card/40 px-4 py-2.5 text-xs">
+          <label className="flex w-56 flex-col gap-1">
+            <span className="font-medium text-muted-foreground">Account</span>
+            <MultiSelect
+              options={filterOptions.accounts}
+              value={filters.accountIds}
+              onChange={(v) => updateFilters({ accountIds: v })}
+              placeholder="All entities"
+            />
+          </label>
+          <label className="flex w-64 flex-col gap-1">
+            <span className="font-medium text-muted-foreground">Org</span>
+            <MultiSelect
+              options={filterOptions.orgs}
+              value={filters.orgIds}
+              onChange={(v) => updateFilters({ orgIds: v })}
+              placeholder="All orgs"
+            />
+          </label>
+          <label className="flex w-64 flex-col gap-1">
+            <span className="font-medium text-muted-foreground">Focus on a person</span>
+            <SingleSelect
+              searchable
+              options={filterOptions.people}
+              value={filters.focusId}
+              onChange={(v) => updateFilters({ focusId: v })}
+              placeholder="Anyone"
+            />
+          </label>
+          <div className="flex flex-col gap-1">
+            <span className="font-medium text-muted-foreground">Lines</span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {LINE_KINDS.map((k) => (
+                <label key={k} className="flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    className="accent-primary"
+                    checked={filters.lines[k]}
+                    onChange={(e) => updateFilters({ lines: { ...filters.lines, [k]: e.target.checked } })}
+                  />
+                  <span
+                    className="inline-block w-5 border-t-2 align-middle"
+                    style={{
+                      borderColor: k === "influence" ? INFLUENCE_COLOR : EDGE_COLOR,
+                      borderTopStyle: k === "low" ? "dotted" : k === "confirmed" || k === "influence" ? "solid" : "dashed",
+                    }}
+                  />
+                  {LINE_LABELS[k]}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="flex cursor-pointer items-center gap-1.5" title="Look past the saved canvas to every contact matching the account and org filters">
+              <input
+                type="checkbox"
+                className="accent-primary"
+                checked={filters.everyone}
+                disabled={!!filters.focusId}
+                onChange={(e) => updateFilters({ everyone: e.target.checked })}
+              />
+              Include people not on the canvas
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                className="accent-primary"
+                checked={filters.connectedOnly}
+                onChange={(e) => updateFilters({ connectedOnly: e.target.checked })}
+              />
+              Only people with a visible line
+            </label>
+          </div>
+          {activeFilterCount > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => updateFilters(DEFAULT_FILTERS)}>
+              Clear filters
+            </Button>
+          )}
+          {focusPerson && (
+            <p className="basis-full text-muted-foreground">
+              Showing {focusPerson.full_name}&apos;s management chain, everyone below them, and their influence links. Account and org filters are paused while focusing.
+            </p>
+          )}
+          {filtering && !focusPerson && (
+            <p className="basis-full text-muted-foreground">
+              Filtered views get their own tidy layout; moving cards here doesn&apos;t change your saved canvas.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Drop-confirmation bar */}
       {pendingDrop && pendingChild && pendingManager && (
@@ -689,8 +902,20 @@ function CanvasInner({ accountId, accountName, contacts, orgs, accounts, influen
                 >
                   Open profile
                 </Link>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  title="Show only this person's management chain, reports, and influence links"
+                  onClick={() => {
+                    updateFilters({ focusId: selected.id });
+                    setFiltersOpen(true);
+                    setSelectedId(null);
+                  }}
+                >
+                  <Crosshair className="size-3.5" /> Focus
+                </Button>
                 <Button size="sm" variant="ghost" onClick={() => removeFromCanvas(selected.id)}>
-                  Remove from canvas
+                  Remove
                 </Button>
               </div>
             </div>

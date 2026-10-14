@@ -156,7 +156,7 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
         actions={
           <>
             <Link
-              href={`/accounts/${account.id}/canvas`}
+              href={`/canvas?account=${account.id}`}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-2.5 text-sm font-medium text-primary hover:bg-primary/20"
               title="Drag-and-drop org chart and entity map"
             >

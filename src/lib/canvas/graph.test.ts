@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_FILTERS,
   EMPTY_LAYOUT,
+  applyCanvasFilters,
+  enclosingGroupSize,
+  filtersActive,
+  reportingLineKind,
+  type CanvasFilters,
   defaultPeopleIds,
   hierarchyAccounts,
   layoutWithElk,
@@ -179,5 +185,63 @@ describe("layoutWithElk", () => {
     expect(out.boss.y).toBeGreaterThanOrEqual(36);
     expect(out.report.y).toBeGreaterThan(out.boss.y);
     expect(out.loose).toBeDefined();
+  });
+});
+
+describe("canvas filters", () => {
+  type C = Parameters<typeof applyCanvasFilters>[0][number];
+  const p = (id: string, x: Partial<C> = {}): C => ({
+    id,
+    account_id: "axp",
+    org_id: "ets",
+    reports_to_id: null,
+    reports_to_confidence: null,
+    ...x,
+  });
+  // ceo ← cio (confirmed) ← vp (medium) ← eng (low); bank person in another entity/org; loner unlinked.
+  const people: C[] = [
+    p("ceo", { org_id: "office" }),
+    p("cio", { reports_to_id: "ceo", reports_to_confidence: "confirmed" }),
+    p("vp", { reports_to_id: "cio", reports_to_confidence: "medium" }),
+    p("eng", { reports_to_id: "vp", reports_to_confidence: "low" }),
+    p("bank", { account_id: "aenb", org_id: "risk", reports_to_id: "cio" }),
+    p("loner"),
+  ];
+  const infl: InfluenceLink[] = [{ from_contact_id: "loner", to_contact_id: "vp" }];
+  const all = new Set(people.map((c) => c.id));
+  const run = (f: Partial<CanvasFilters>, canvas = all) =>
+    [...applyCanvasFilters(people, infl, canvas, { ...DEFAULT_FILTERS, ...f })].sort();
+
+  it("passes everything through with no filters", () => {
+    expect(run({})).toEqual([...all].sort());
+    expect(filtersActive(DEFAULT_FILTERS)).toBe(false);
+  });
+
+  it("narrows by entity and by org", () => {
+    expect(run({ accountIds: ["aenb"] })).toEqual(["bank"]);
+    expect(run({ orgIds: ["office", "risk"] })).toEqual(["bank", "ceo"]);
+  });
+
+  it("stays inside the canvas set unless asked for everyone", () => {
+    const canvas = new Set(["ceo", "cio"]);
+    expect(run({ orgIds: ["ets"] }, canvas)).toEqual(["cio"]);
+    expect(run({ orgIds: ["ets"], everyone: true }, canvas)).toEqual(["cio", "eng", "loner", "vp"]);
+  });
+
+  it("focuses on a person's chain up, reports below, and influence links", () => {
+    expect(run({ focusId: "vp" })).toEqual(["ceo", "cio", "eng", "loner", "vp"]);
+    expect(run({ focusId: "eng" })).toEqual(["ceo", "cio", "eng", "vp"]);
+  });
+
+  it("connected-only keeps people joined by a visible line kind", () => {
+    const lines = { ...DEFAULT_FILTERS.lines, medium: false, low: false, unrated: false, influence: false };
+    expect(run({ connectedOnly: true, lines })).toEqual(["ceo", "cio"]);
+    expect(run({ connectedOnly: true, lines: { ...lines, influence: true } })).toEqual(["ceo", "cio", "loner", "vp"]);
+    expect(reportingLineKind(null)).toBe("unrated");
+  });
+
+  it("sizes an org box around its cards", () => {
+    expect(enclosingGroupSize([], { w: 220, h: 78 })).toEqual({ w: 252, h: 130 });
+    expect(enclosingGroupSize([{ x: 16, y: 36 }, { x: 256, y: 134 }], { w: 220, h: 78 })).toEqual({ w: 492, h: 228 });
   });
 });
