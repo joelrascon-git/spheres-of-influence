@@ -16,6 +16,14 @@ export class AiNotConfiguredError extends Error {
   }
 }
 
+/** The model answered, but the answer is not JSON; retrying a slice is cheaper than aborting. */
+export class AiBadJsonError extends Error {
+  constructor() {
+    super("The model did not return valid JSON.");
+    this.name = "AiBadJsonError";
+  }
+}
+
 export function aiConfigured(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;
 }
@@ -51,7 +59,7 @@ export function extractJson(text: string): unknown {
       }
     }
   }
-  throw new Error("The model did not return valid JSON.");
+  throw new AiBadJsonError();
 }
 
 /** One Messages API completion. Throws with the API's own error text on failure. */

@@ -22,7 +22,7 @@ import { companyKey, planAccounts, type ExistingAccount } from "@/lib/import/acc
 import { classifyContact, type Classification } from "@/lib/inference/classify";
 import type { OrgRef } from "@/lib/inference/orgs";
 import { queueInferences, type InferenceProposal } from "@/lib/inference/queue";
-import { aiCompleteJson, getStoredPrompt } from "@/lib/ai/client";
+import { AiBadJsonError, aiCompleteJson, getStoredPrompt } from "@/lib/ai/client";
 import type { Evidence } from "@/lib/types";
 import { STATUS } from "@/lib/constants";
 
@@ -647,8 +647,15 @@ export async function enrichNextSlice(
 
     try {
       const prompt = await getStoredPrompt(supabase, "import_inference");
+      // Reasoning models spend output tokens on thinking before the JSON; give the
+      // slice enough budget to finish both.
       const parsed = enrichmentResponse.parse(
-        await aiCompleteJson<unknown>({ model: prompt.model, system: prompt.system_prompt, user: JSON.stringify(context) }),
+        await aiCompleteJson<unknown>({
+          model: prompt.model,
+          system: prompt.system_prompt,
+          user: JSON.stringify(context),
+          maxTokens: 16_000,
+        }),
       );
       const byName = new Map(candidates.map((c) => [String(c.full_name).toLowerCase(), c.id as string]));
       const proposals: InferenceProposal[] = [];
@@ -671,7 +678,7 @@ export async function enrichNextSlice(
       queued = await queueInferences(supabase, userId, proposals);
     } catch (e) {
       // A malformed model answer will not fix itself on retry: skip the slice and count it.
-      if (e instanceof z.ZodError) failed = candidates.length;
+      if (e instanceof z.ZodError || e instanceof AiBadJsonError) failed = candidates.length;
       else {
         return { error: e instanceof Error ? e.message : "Enrichment failed. Retry to continue where it stopped." };
       }
