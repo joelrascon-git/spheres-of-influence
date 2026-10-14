@@ -295,6 +295,60 @@ describe("knowledge schema", () => {
     }));
 });
 
+describe("ingestion schema", () => {
+  const ACCOUNT = "10000000-0000-0000-0000-000000000001";
+  const BRIAN = "30000000-0000-0000-0000-000000000001";
+  const DOC = "80000000-0000-0000-0000-000000000001";
+
+  beforeAll(async () =>
+    as(USER_A, async () => {
+      await db.exec(`
+        insert into public.documents (id, account_id, title, raw_text, call_type, notes_html, status)
+        values ('${DOC}', '${ACCOUNT}', 'Carvana discovery', 'Priya said Dan runs everything through her…',
+                'discovery', '<h2>Attendees</h2>', 'done');
+        insert into public.inferences (subject_type, subject_id, kind, value, confidence, evidence, source, document_id)
+        values ('contact', '${BRIAN}', 'influence_edge',
+                '{"to": "Keyur Joshi", "strength": "high"}'::jsonb, 'confirmed',
+                '[{"claim":"“Brian defers to Keyur on tooling.”","confidence":"confirmed"}]'::jsonb, 'ai', '${DOC}');
+      `);
+    }),
+  );
+
+  it("accepts influence edges and links proposals to their document", () =>
+    as(USER_A, async () => {
+      const rows = await db.query<{ kind: string; document_id: string }>(
+        `select kind, document_id from public.inferences where subject_id = '${BRIAN}' and kind = 'influence_edge'`,
+      );
+      expect(rows.rows[0]).toEqual({ kind: "influence_edge", document_id: DOC });
+    }));
+
+  it("enforces the call-type and status vocabularies", () =>
+    as(USER_A, async () => {
+      await expect(
+        db.exec(`insert into public.documents (account_id, raw_text, call_type) values ('${ACCOUNT}', 'x', 'cold_call')`),
+      ).rejects.toThrow();
+      await expect(
+        db.exec(`insert into public.documents (account_id, raw_text, status) values ('${ACCOUNT}', 'x', 'paused')`),
+      ).rejects.toThrow();
+    }));
+
+  it("scopes documents to their owner", () =>
+    as(USER_B, async () => {
+      const docs = await db.query(`select id from public.documents`);
+      expect(docs.rows).toEqual([]);
+    }));
+
+  it("keeps proposals when their source document is deleted", () =>
+    as(USER_A, async () => {
+      await db.exec(`delete from public.documents where id = '${DOC}'`);
+      const rows = await db.query<{ id: string; document_id: string | null; status: string }>(
+        `select id, document_id, status from public.inferences where subject_id = '${BRIAN}' and kind = 'influence_edge'`,
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]).toMatchObject({ document_id: null, status: "pending" });
+    }));
+});
+
 describe("import chunks", () => {
   const BATCH = "70000000-0000-0000-0000-000000000001";
   const ITEM_A = "70000000-0000-0000-0000-00000000000a";

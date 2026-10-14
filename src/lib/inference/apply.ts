@@ -22,17 +22,21 @@ export type WritePlan =
   | { type: "patch"; patch: Record<string, unknown> }
   /** Merge into a contact array column; upgrading persona status marks the merge evidence-backed. */
   | { type: "array"; field: "statuses" | "personas"; op: "add" | "remove" | "set"; values: string[]; upgradePersonaStatus?: boolean }
+  /** Merge keys into a jsonb record column (personal details accumulate, never replace). */
+  | { type: "record"; field: "personal_details"; patch: Record<string, string> }
   /** Set org_id by resolving an org name (or id) inside the contact's account. */
   | { type: "org"; org: string }
   /** Set reports_to by resolving a full name inside the contact's account. */
   | { type: "manager"; name: string; confidence?: string }
   /** Link the contact to an initiative/challenge by code (or name). */
   | { type: "program_link"; program: "initiative" | "challenge"; code: string }
+  /** Upsert an influence edge from the subject contact to a resolved name. */
+  | { type: "influence"; to: string; strength?: "high" | "medium" | "low" }
   /** Informational only: accepting records the review without writing. */
   | { type: "none" };
 
 /** Fields the "field" kind may write, per subject type. Never profile text: that is seller territory. */
-const FIELD_WRITES: Record<"contact" | "account" | "org", Record<string, "array" | "text" | "bool" | "int" | "enum">> = {
+const FIELD_WRITES: Record<"contact" | "account" | "org", Record<string, "array" | "text" | "bool" | "int" | "enum" | "record">> = {
   contact: {
     statuses: "array",
     personas: "array",
@@ -41,6 +45,7 @@ const FIELD_WRITES: Record<"contact" | "account" | "org", Record<string, "array"
     champion_flag: "enum",
     can_veto: "bool",
     function_bucket: "int",
+    personal_details: "record",
   },
   account: {
     why_anything: "text",
@@ -82,6 +87,7 @@ const CONTACT_ONLY_KINDS: readonly Inference["kind"][] = [
   "reporting_line",
   "initiative_link",
   "challenge_link",
+  "influence_edge",
 ];
 
 /**
@@ -130,6 +136,14 @@ export function writePlanFor(
       if (!code) return { error: `No ${program} code in the proposal.` };
       return { plan: { type: "program_link", program, code } };
     }
+    case "influence_edge": {
+      const to = asString(value.to) ?? asString(value.to_name) ?? asString(value.influences);
+      if (!to) return { error: "No target person in the influence proposal." };
+      const strength = asString(value.strength);
+      if (strength && !["high", "medium", "low"].includes(strength))
+        return { error: `“${strength}” is not a strength (high, medium or low).` };
+      return { plan: { type: "influence", to, strength: (strength ?? undefined) as "high" | "medium" | "low" | undefined } };
+    }
     case "field": {
       const field = asString(value.field);
       if (!field) return { error: "No field name in the proposal." };
@@ -138,6 +152,19 @@ export function writePlanFor(
       const shape = FIELD_WRITES[subjectType][field];
       if (!shape) return { error: `“${field}” is not a field proposals can write.` };
       const mode = asString(value.mode) === "add" || asString(value.mode) === "remove" ? asString(value.mode) : "set";
+      if (shape === "record") {
+        const raw = value.value;
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+          return { error: `“${field}” needs an object of key → text.` };
+        const patch: Record<string, string> = {};
+        for (const [k, v] of Object.entries(raw)) {
+          if (typeof v !== "string" || !v.trim()) return { error: `“${field}” needs text values.` };
+          if (k.length > 100) return { error: `“${k.slice(0, 50)}…” is too long a key.` };
+          patch[k] = v.trim();
+        }
+        if (!Object.keys(patch).length) return { error: `“${field}” needs at least one detail.` };
+        return { plan: { type: "record", field: "personal_details", patch } };
+      }
       if (shape === "array") {
         const values = asArray(value.value) ?? (typeof value.value === "string" ? [value.value] : null);
         if (!values) return { error: `“${field}” needs a list of values.` };
@@ -204,11 +231,23 @@ export function describeInferenceValue(kind: Inference["kind"], value: Record<st
       const code = str("code") ?? str("name") ?? "?";
       return `${label}: ${code}`;
     }
+    case "influence_edge": {
+      const to = str("to") ?? str("to_name") ?? str("influences") ?? "?";
+      return `Influences ${to}`;
+    }
     case "field": {
       const field = str("field") ?? "?";
       const mode = str("mode");
       const raw = value.value;
-      const val = Array.isArray(raw) ? raw.join(", ") : raw == null ? "?" : String(raw);
+      const val = Array.isArray(raw)
+        ? raw.join(", ")
+        : raw != null && typeof raw === "object"
+          ? Object.entries(raw as Record<string, unknown>)
+              .map(([k, v]) => `${k}: ${String(v)}`)
+              .join(", ")
+          : raw == null
+            ? "?"
+            : String(raw);
       const op = mode === "add" ? " +=" : mode === "remove" ? " -=" : " =";
       return `${field}${op} ${val}`;
     }
@@ -266,6 +305,19 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
       if (plan.upgradePersonaStatus && (c.persona_status === null || c.persona_status === "assumed"))
         patch.persona_status = "indicated";
       const { error: e } = await supabase.from("contacts").update(patch).eq("id", inf.subject_id);
+      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+    }
+
+    case "record": {
+      const { data: c } = (await supabase
+        .from("contacts")
+        .select("id, personal_details")
+        .eq("id", inf.subject_id)
+        .maybeSingle()) as { data: { id: string; personal_details: Record<string, string> | null } | null };
+      if (!c) return { ok: false, error: "The subject contact no longer exists." };
+      // Details accumulate: a new favorite drink joins the birthday, it never replaces the record.
+      const merged = { ...(c.personal_details ?? {}), ...plan.patch };
+      const { error: e } = await supabase.from("contacts").update({ personal_details: merged }).eq("id", inf.subject_id);
       return e ? { ok: false, error: e.message } : { ok: true, written: true };
     }
 
@@ -362,6 +414,43 @@ export async function applyInference(supabase: SupabaseClient, inf: InferenceLik
             note: inf.rationale,
           },
           { onConflict: "contact_id," + fk, ignoreDuplicates: true },
+        );
+      return e ? { ok: false, error: e.message } : { ok: true, written: true };
+    }
+
+    case "influence": {
+      const { data: c } = (await supabase
+        .from("contacts")
+        .select("id, account_id, personas, statuses, persona_status")
+        .eq("id", inf.subject_id)
+        .maybeSingle()) as { data: ContactRow | null };
+      if (!c) return { ok: false, error: "The subject contact no longer exists." };
+      let toId: string | null = null;
+      if (UUID_RE.test(plan.to)) {
+        const { data: m } = await supabase.from("contacts").select("id").eq("id", plan.to).maybeSingle();
+        if (m) toId = m.id;
+      } else {
+        const q = supabase.from("contacts").select("id, full_name").neq("id", inf.subject_id).limit(10000);
+        if (c.account_id) q.eq("account_id", c.account_id);
+        else q.is("account_id", null);
+        const { data } = await q;
+        const want = plan.to.toLowerCase();
+        const exact = (data ?? []).find((m: { id: string; full_name: string }) => m.full_name.toLowerCase() === want);
+        if (exact) toId = exact.id;
+      }
+      if (!toId) return { ok: false, error: `No contact named “${plan.to}” for the influence edge.` };
+      const { error: e } = await supabase
+        .from("influences")
+        .upsert(
+          {
+            from_contact_id: inf.subject_id,
+            to_contact_id: toId,
+            strength: plan.strength ?? "medium",
+            confidence: reportingConfidenceFrom(inf.confidence),
+            evidence: evidenceTextOf(inf.evidence, inf.rationale),
+            source: inf.source,
+          },
+          { onConflict: "from_contact_id,to_contact_id" },
         );
       return e ? { ok: false, error: e.message } : { ok: true, written: true };
     }

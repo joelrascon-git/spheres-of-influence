@@ -65,6 +65,39 @@ describe("writePlanFor", () => {
     expect(plan("contact", "initiative_link", {})).toEqual({ error: "No initiative code in the proposal." });
   });
 
+  it("builds influence edges with a resolved target and optional strength", () => {
+    expect(plan("contact", "influence_edge", { to: "Dan Kowalski", strength: "high" })).toEqual({
+      plan: { type: "influence", to: "Dan Kowalski", strength: "high" },
+    });
+    expect(plan("contact", "influence_edge", { to: "Dan Kowalski" })).toEqual({
+      plan: { type: "influence", to: "Dan Kowalski", strength: undefined },
+    });
+    expect(plan("contact", "influence_edge", { strength: "high" })).toEqual({
+      error: "No target person in the influence proposal.",
+    });
+    expect(plan("contact", "influence_edge", { to: "Dan Kowalski", strength: "magnetic" })).toEqual({
+      error: "“magnetic” is not a strength (high, medium or low).",
+    });
+    expect(plan("account", "influence_edge", { to: "Dan Kowalski" })).toEqual({
+      error: "“influence_edge” proposals only apply to contacts.",
+    });
+  });
+
+  it("merges personal details as a record, refusing junk values", () => {
+    expect(plan("contact", "field", { field: "personal_details", value: { favorite_drink: "Negroni" }, mode: "add" })).toEqual({
+      plan: { type: "record", field: "personal_details", patch: { favorite_drink: "Negroni" } },
+    });
+    expect(plan("contact", "field", { field: "personal_details", value: "just text", mode: "add" })).toEqual({
+      error: "“personal_details” needs an object of key → text.",
+    });
+    expect(plan("contact", "field", { field: "personal_details", value: { birthday: 42 }, mode: "add" })).toEqual({
+      error: "“personal_details” needs text values.",
+    });
+    expect(plan("contact", "field", { field: "personal_details", value: {}, mode: "add" })).toEqual({
+      error: "“personal_details” needs at least one detail.",
+    });
+  });
+
   it("writes only allowlisted fields per subject type", () => {
     expect(plan("contact", "field", { field: "statuses", value: ["No Longer at Company"], mode: "add" })).toEqual({
       plan: { type: "array", field: "statuses", op: "add", values: ["No Longer at Company"], upgradePersonaStatus: false },
@@ -140,6 +173,12 @@ describe("describeInferenceValue", () => {
     expect(describeInferenceValue("field", { field: "statuses", value: ["No Longer at Company"], mode: "add" })).toBe(
       "statuses += No Longer at Company",
     );
+    expect(describeInferenceValue("influence_edge", { to: "Dan Kowalski", strength: "high" })).toBe(
+      "Influences Dan Kowalski",
+    );
+    expect(
+      describeInferenceValue("field", { field: "personal_details", value: { favorite_drink: "Negroni" }, mode: "add" }),
+    ).toBe("personal_details += favorite_drink: Negroni");
     expect(describeInferenceValue("summary", { summary: "x".repeat(200) })).toBe(`${"x".repeat(90)}…`);
   });
 });

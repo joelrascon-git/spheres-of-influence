@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Network, Users } from "lucide-react";
+import { ArrowLeft, Mic, Network, Users } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NotesPanel } from "@/app/(app)/contacts/[id]/contact-panels";
@@ -161,6 +161,13 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
               title="Drag-and-drop org chart and entity map"
             >
               <Network className="size-3.5" /> Canvas
+            </Link>
+            <Link
+              href={`/ingest?account=${account.id}`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium hover:bg-muted"
+              title="Paste a transcript or notes for this account"
+            >
+              <Mic className="size-3.5" /> Ingest
             </Link>
             <Link
               href={`/contacts?account=${account.id}`}

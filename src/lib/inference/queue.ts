@@ -16,6 +16,7 @@ export const INFERENCE_KINDS = [
   "challenge_link",
   "field",
   "summary",
+  "influence_edge",
 ] as const;
 export type InferenceKind = (typeof INFERENCE_KINDS)[number];
 
@@ -36,6 +37,8 @@ export type InferenceProposal = {
   evidence?: Evidence[];
   rationale?: string;
   source?: "research" | "import" | "ai" | "manual";
+  /** Links the proposal to the ingested document it came from. */
+  documentId?: string;
 };
 
 /** Valid enum check shared by the queue and unit tests. */
@@ -71,6 +74,7 @@ export async function queueInferences(
     evidence: p.evidence ?? [],
     rationale: p.rationale ?? null,
     source: p.source ?? "ai",
+    document_id: p.documentId ?? null,
   }));
   for (let i = 0; i < rows.length; i += 200) {
     const { error } = await supabase.from("inferences").insert(rows.slice(i, i + 200));

@@ -279,8 +279,40 @@ Making updates:
 ${PROVENANCE_RULES}`,
   },
   {
+    key: "call_notes",
+    version: 1,
+    name: "Ingest: detect the call type and write the notes",
+    description: "Turns a pasted transcript, voice note or free-form note into structured call notes under the seller's notes rules.",
+    model: "claude-sonnet-5-5",
+    system_prompt: `${SELLER_CONTEXT}
+
+You turn one pasted source — a call transcript, a voice note pasted as text, or a free-form note — into clean call notes. Factory's product claims and positioning, when you need them, come from the knowledge base attached in the user message; never invent product facts, pricing or roadmap.
+
+First classify the source:
+- "discovery" — a discovery call with a prospect
+- "adaptive_non_discovery" — any other call with a prospect (demo, follow-up, negotiation, exec intro…)
+- "partner_or_internal" — a call with a partner or with the seller's own colleagues
+- "personal_note" — a personal voice note or jotting, not a call
+
+Then write the notes. These rules are absolute:
+- The source is the only source. Never add facts, numbers, names, dates or quotes that are not in it. If a section would be empty, omit the section entirely.
+- Bullets only: no paragraphs, no "we discussed" filler. One bullet per point, short.
+- On partner/internal calls, attribute every statement to its speaker. Never present a partner's or a colleague's words as the prospect's.
+- Next steps: list only commitments and offers actually made, each tagged [Committed] or [Offered].
+- Keep people's names exactly as the source spells them.
+- When Factory positioning is stated on the call, quote it as said; do not improve it.
+
+Section templates (omit empty sections):
+- Discovery: Attendees, Context, Pain & goals, Current state / tech stack, Initiatives & timelines, Decision process & stakeholders, Next steps.
+- Non-discovery: adapt to what the call covered, but always keep Next steps.
+- Partner/internal: lead with a "Who said what" structure so attribution survives.
+- Personal note: clean up into bullets without adding content; keep it short.
+
+Return only JSON: {"call_type":"discovery|adaptive_non_discovery|partner_or_internal|personal_note","notes_markdown":"## Attendees\\n- ..."}. notes_markdown uses only ## headings, bullet lists, **bold** and backticks.`,
+  },
+  {
     key: "context_extraction",
-    version: 2,
+    version: 3,
     name: "Extract updates from notes, transcripts and documents",
     description: "Parses meeting notes, transcripts and documents into proposed changes.",
     model: "claude-opus-5-5",
@@ -302,7 +334,14 @@ Extract every change worth recording:
 
 ${PROVENANCE_RULES}
 
-Return only the JSON described by the tool schema. Quote the source text that supports each change.`,
+Every proposal carries evidence quoting the source text. "match" must be the exact full_name of a contact in the provided contact list, or null — the caller re-verifies it, and a wrong match is dropped, so when unsure use null. Omit people and proposals with nothing well-grounded to record.
+
+Return only JSON of this exact shape:
+{"people":[{"name":"name exactly as the source spells it","match":"exact full_name of the existing contact this is, or null","email":"... or null","linkedin_url":"... or null","title":"... or null","org":"org name or null","note":"dated markdown note for this person's timeline, or null","proposals":[{"kind":"persona|seniority_level|org_assignment|key_person|reporting_line|initiative_link|challenge_link|field|influence_edge","value":{...},"confidence":"confirmed|secondhand|unverified|inference","evidence":[{"claim":"quote from the source","confidence":"confirmed|secondhand|unverified|inference"}],"rationale":"one sentence"}]}],
+ "account_proposals":[same proposal shape, about the account as a whole, for why_anything / why_factory / why_now],
+ "next_steps":[{"person":"name or null","text":"what was agreed or offered","due":"YYYY-MM-DD or null","committed":true|false}]}
+
+value shapes: persona → {"personas":["EB"]}; seniority_level → {"seniority_level":"L3"}; org_assignment → {"org":"Org name from the org list"}; key_person → {"is_key":true,"key_reasoning":"..."}; reporting_line → {"reports_to":"Full Name","reports_to_confidence":"medium|low"}; initiative_link → {"code":"I1"}; challenge_link → {"code":"Ch1"}; field → {"field":"statuses","value":["Connected - Meeting Set"],"mode":"add"} or {"field":"personal_details","value":{"favorite_drink":"Negroni"},"mode":"add"}; influence_edge → {"to":"Full Name of an existing contact this person influences","strength":"high|medium|low"}. The subject of each people-proposal is that person.`,
   },
   {
     key: "research_contradictions",

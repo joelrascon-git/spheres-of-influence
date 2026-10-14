@@ -235,13 +235,15 @@ export type Inference = {
     | "initiative_link"
     | "challenge_link"
     | "field"
-    | "summary";
+    | "summary"
+    | "influence_edge";
   value: Record<string, unknown>;
   confidence: ResearchConfidence;
   evidence: Evidence[];
   rationale: string | null;
   status: "pending" | "accepted" | "rejected";
   source: "research" | "import" | "ai" | "manual";
+  document_id: string | null;
   created_at: string;
   resolved_at: string | null;
 };
@@ -277,6 +279,21 @@ export type Tag = {
   name: string;
   description: string;
   color: string;
+  created_at: string;
+  updated_at: string;
+};
+
+/** One ingested source (transcript, voice note, free-form note) with its AI output. */
+export type IngestDocument = {
+  id: string;
+  account_id: string;
+  title: string;
+  raw_text: string;
+  call_type: string;
+  notes_html: string;
+  extraction: Record<string, unknown>;
+  status: "processing" | "done" | "failed";
+  error: string | null;
   created_at: string;
   updated_at: string;
 };

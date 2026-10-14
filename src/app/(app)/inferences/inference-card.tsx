@@ -20,6 +20,7 @@ export const KIND_LABELS: Record<string, string> = {
   challenge_link: "Challenge link",
   field: "Field change",
   summary: "Summary",
+  influence_edge: "Influence edge",
 };
 
 const SOURCE_LABELS: Record<string, string> = {
