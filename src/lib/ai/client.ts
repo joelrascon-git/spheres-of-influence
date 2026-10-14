@@ -26,7 +26,6 @@ export type AiRequest = {
   /** The user turn: structured context for extraction prompts, prose for chat. */
   user: string;
   maxTokens?: number;
-  temperature?: number;
 };
 
 /** Strip fences and surrounding prose, then parse the first JSON object or array. */
@@ -70,7 +69,7 @@ export async function aiComplete(req: AiRequest): Promise<string> {
     body: JSON.stringify({
       model: req.model,
       max_tokens: req.maxTokens ?? 4096,
-      temperature: req.temperature ?? 0.2,
+      // temperature is deprecated on current Anthropic models; the API rejects it.
       system: req.system,
       messages: [{ role: "user", content: req.user }],
     }),
