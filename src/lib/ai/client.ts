@@ -108,7 +108,7 @@ export async function aiCompleteJson<T>(req: AiRequest): Promise<T> {
   return extractJson(await aiComplete(req)) as T;
 }
 
-/** A source the web-search tool actually fetched, for citation checks. */
+/** One source the web-search tool actually fetched, for citation checks. */
 export type WebSearchSource = { url: string; title: string };
 
 /**
@@ -182,4 +182,79 @@ export async function getStoredPrompt(
     return { model: data.model as string, system_prompt: data.system_prompt as string };
   }
   throw new Error(`Prompt "${key}" is not seeded. Sign out and back in to reseed defaults.`);
+}
+
+// ───────────────────────── Chat with tools ─────────────────────────
+
+/** A custom tool the chat model may call; this app executes it server-side. */
+export type ChatToolSpec = { name: string; description: string; input_schema: Record<string, unknown> };
+
+/** One block of a chat message; the tool_use/tool_result pair drives the tool loop. */
+export type ChatContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+
+export type ChatMessage = { role: "user" | "assistant"; content: string | ChatContentBlock[] };
+
+export type AiChatResult = {
+  /** The text blocks joined; empty when the model only called tools. */
+  text: string;
+  toolUses: { id: string; name: string; input: Record<string, unknown> }[];
+  /** Assistant content, minimal and safe to echo back for the next round. */
+  blocks: ChatContentBlock[];
+};
+
+/** One Messages API turn over a full conversation, with optional custom tools. */
+export async function aiChat(req: {
+  model: string;
+  system: string;
+  messages: ChatMessage[];
+  tools?: ChatToolSpec[];
+  maxTokens?: number;
+}): Promise<AiChatResult> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new AiNotConfiguredError();
+
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": API_VERSION,
+    },
+    body: JSON.stringify({
+      model: req.model,
+      max_tokens: req.maxTokens ?? 4096,
+      system: req.system,
+      messages: req.messages,
+      ...(req.tools?.length ? { tools: req.tools } : {}),
+    }),
+    signal: AbortSignal.timeout(120_000),
+  }).catch((e: unknown) => {
+    if (e instanceof Error && e.name === "TimeoutError")
+      throw new Error("The model took too long to answer. Try again or use a smaller batch.");
+    throw e;
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    const message = detail ? `${res.status}: ${detail.slice(0, 500)}` : `${res.status} ${res.statusText}`;
+    throw new Error(`Anthropic API error — ${message}`);
+  }
+  const data = (await res.json()) as { content?: { type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }[] };
+  let text = "";
+  const toolUses: AiChatResult["toolUses"] = [];
+  const blocks: ChatContentBlock[] = [];
+  for (const b of data.content ?? []) {
+    if (b.type === "text" && b.text) {
+      text += b.text;
+      blocks.push({ type: "text", text: b.text });
+    } else if (b.type === "tool_use" && b.id && b.name) {
+      const input = b.input ?? {};
+      toolUses.push({ id: b.id, name: b.name, input });
+      blocks.push({ type: "tool_use", id: b.id, name: b.name, input });
+    }
+  }
+  return { text, toolUses, blocks };
 }
