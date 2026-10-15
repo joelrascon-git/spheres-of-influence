@@ -81,6 +81,7 @@ and everyone else is left untouched.
 | `src/lib/inference/` | Proposal queue, apply plans, undo snapshots |
 | `src/lib/workflow/` | MEDDPICC qualification, campaigns, signals |
 | `src/lib/chat/` | The second-brain chat's read-only tools and tool loop |
+| `src/lib/map/` | World-map query and one-pin-per-city grouping |
 | `src/lib/research/` | The cited AmEx corpus and its idempotent migration |
 | `src/lib/tenure.ts` | Live tenure from import-time start dates |
 | `src/app/(app)/contacts/` | Search, facets, bulk actions, profiles, CSV export |
@@ -103,7 +104,7 @@ and everyone else is left untouched.
    with read-only tools and citations. The cited AmEx research corpus (knowledge base, dossier,
    org map, key contacts, initiatives, challenges) loads from Admin → Research data and stays
    editable on the account page.
-4. Not built: direct Evaboot API import, Sumble enrichment, Mapbox geocoded maps.
+4. Not built: direct Evaboot API import, Sumble enrichment.
 
 
 <!-- Trigger deployment -->

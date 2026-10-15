@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Building2, Home, ListChecks, LogOut, Megaphone, MessageSquare, Mic, Network, Settings, Tags, Upload, Users } from "lucide-react";
+import { Building2, Home, ListChecks, LogOut, MapPinned, Megaphone, MessageSquare, Mic, Network, Settings, Tags, Upload, Users } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { cn } from "@/lib/utils";
 import { signOut } from "@/app/login/actions";
@@ -12,6 +12,7 @@ const NAV = [
   { href: "/accounts", label: "Accounts", icon: Building2 },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/canvas", label: "Canvas", icon: Network },
+  { href: "/map", label: "Map", icon: MapPinned },
   { href: "/ingest", label: "Ingest", icon: Mic },
   { href: "/campaigns", label: "Campaigns", icon: Megaphone },
   { href: "/inferences", label: "Review", icon: ListChecks, badge: true },
