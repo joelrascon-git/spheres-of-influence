@@ -57,6 +57,16 @@ describe("cityPins", () => {
     expect(pins).toHaveLength(1);
     expect(pins[0].count).toBe(2);
   });
+
+  it("counts unlocated people on their city's pin when a neighbor has coordinates", () => {
+    const { pins, unmapped } = cityPins([
+      person("a", { location_city: "Phoenix", location_lat: 33.4, location_lng: -112 }),
+      person("b", { location_city: "Phoenix" }),
+    ]);
+    expect(unmapped).toBe(0);
+    expect(pins).toHaveLength(1);
+    expect(pins[0].count).toBe(2);
+  });
 });
 
 describe("cityKeyOf", () => {

@@ -25,6 +25,7 @@ import { legacySeniority } from "@/lib/inference/title";
 import { nameTokens, normalizeDomain } from "@/lib/import/accounts";
 import { publicUrlSlug } from "@/lib/import/plan";
 import { markdownToHtml } from "@/lib/markdown";
+import { searchPlaces } from "@/lib/geocode";
 import {
   EB_CONTACT_KEY,
   PRIMARY_ACCOUNT_CODE,
@@ -179,6 +180,7 @@ export type ResearchMigrationCounts = {
   contact_challenge_links: number;
   org_initiative_links: number;
   influence_edges: number;
+  geocoded_locations: number;
   signals: number;
 };
 
@@ -206,6 +208,7 @@ const zeroCounts = (): ResearchMigrationCounts => ({
   contact_challenge_links: 0,
   org_initiative_links: 0,
   influence_edges: 0,
+  geocoded_locations: 0,
   signals: 0,
 });
 
@@ -578,6 +581,64 @@ export async function runResearchMigration(
         })
         .eq("id", id);
       if (error) throw new Error(`Contact ${c.key} reports-to: ${error.message}`);
+    }
+    // ── Locations: pin corpus cities on the world map ──
+    // The CSV import geocodes its rows, but after a demo reset this migration is
+    // the only thing re-seeding contacts — so it geocodes too, through the same
+    // Photon geocoder, with the same per-query cache the import path uses.
+    const { data: unlocatedRows, error: unlocatedError } = await supabase
+      .from("contacts")
+      .select("id, location")
+      .not("location", "is", null)
+      .is("location_lat", null)
+      .limit(10000);
+    if (unlocatedError) throw new Error(`Geocode fetch: ${unlocatedError.message}`);
+    const idsByLocation = new Map<string, string[]>();
+    for (const r of rows(unlocatedRows)) {
+      const loc = (r.location as string | null)?.trim();
+      if (!loc) continue;
+      const key = loc.toLowerCase();
+      idsByLocation.set(key, [...(idsByLocation.get(key) ?? []), r.id as string]);
+    }
+    for (const [query, ids] of idsByLocation) {
+      const { data: cached } = (await supabase.from("geocode_cache").select("*").eq("query", query).maybeSingle()) as {
+        data: { label: string | null; lat: number | null; lng: number | null; city: string | null; region: string | null; country: string | null } | null;
+      };
+      let place: { label: string | null; lat: number; lng: number; city: string | null; region: string | null; country: string | null } | null = null;
+      if (cached && cached.lat != null && cached.lng != null) {
+        place = { label: cached.label, lat: cached.lat, lng: cached.lng, city: cached.city, region: cached.region, country: cached.country };
+      }
+      if (!place) {
+        try {
+          place = (await searchPlaces(query, 1))[0] ?? null;
+        } catch {
+          place = null; // Photon unreachable: leave these off the map, don't fail the migration.
+        }
+        const { error: cacheError } = await supabase.from("geocode_cache").upsert({
+          query,
+          label: place?.label ?? null,
+          lat: place?.lat ?? null,
+          lng: place?.lng ?? null,
+          city: place?.city ?? null,
+          region: place?.region ?? null,
+          country: place?.country ?? null,
+        });
+        if (cacheError) throw new Error(`Geocode cache: ${cacheError.message}`);
+      }
+      if (!place) continue;
+      const { error: updateError } = await supabase
+        .from("contacts")
+        .update({
+          location_lat: place.lat,
+          location_lng: place.lng,
+          location_city: place.city,
+          location_region: place.region,
+          location_country: place.country,
+        })
+        .in("id", ids);
+      if (updateError) throw new Error(`Geocode update: ${updateError.message}`);
+      counts.geocoded_locations += ids.length;
+      await new Promise((resolve) => setTimeout(resolve, 120)); // Photon: keep requests polite
     }
 
     // ── Links and influence edges ──

@@ -41,30 +41,42 @@ export function cityKeyOf(p: Pick<MapPerson, "location" | "location_city">): str
 /**
  * One pin per city — same-city contacts share a dot with a headcount, which is
  * the "who's in Phoenix for the regional dinner" view. Contacts without
- * coordinates stay off the map but are counted.
+ * coordinates still join their city's pin when a neighbor there is geocoded;
+ * only cities nobody can place (and people with no location text at all) are
+ * counted off the map.
  */
 export function cityPins(people: MapPerson[]): { pins: CityPin[]; unmapped: number } {
-  const groups = new Map<string, { label: string; lats: number[]; lngs: number[] }>();
+  const groups = new Map<string, { label: string; lats: number[]; lngs: number[]; total: number }>();
   let unmapped = 0;
   for (const p of people) {
-    if (p.location_lat == null || p.location_lng == null) {
+    const label = p.location_city?.trim() || p.location?.trim();
+    if (!label) {
       unmapped++;
       continue;
     }
-    const label = p.location_city?.trim() || p.location?.trim() || "Unknown";
     const key = label.toLowerCase();
-    const g = groups.get(key) ?? { label, lats: [], lngs: [] };
-    g.lats.push(p.location_lat);
-    g.lngs.push(p.location_lng);
+    const g = groups.get(key) ?? { label, lats: [], lngs: [], total: 0 };
+    g.total++;
+    if (p.location_lat != null && p.location_lng != null) {
+      g.lats.push(p.location_lat);
+      g.lngs.push(p.location_lng);
+    }
     groups.set(key, g);
   }
-  const pins: CityPin[] = [...groups.entries()].map(([key, g]) => ({
-    key,
-    city: g.label,
-    lat: g.lats.reduce((a, b) => a + b, 0) / g.lats.length,
-    lng: g.lngs.reduce((a, b) => a + b, 0) / g.lngs.length,
-    count: g.lats.length,
-  }));
+  const pins: CityPin[] = [];
+  for (const [key, g] of groups) {
+    if (g.lats.length === 0) {
+      unmapped += g.total;
+      continue;
+    }
+    pins.push({
+      key,
+      city: g.label,
+      lat: g.lats.reduce((a, b) => a + b, 0) / g.lats.length,
+      lng: g.lngs.reduce((a, b) => a + b, 0) / g.lngs.length,
+      count: g.total,
+    });
+  }
   pins.sort((a, b) => b.count - a.count || a.city.localeCompare(b.city));
   return { pins, unmapped };
 }
