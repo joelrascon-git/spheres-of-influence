@@ -362,6 +362,32 @@ export type Task = {
   updated_at: string;
 };
 
+/** One motion against one account: a dinner, a break-in, a co-sell, a webinar. */
+export type Campaign = {
+  id: string;
+  account_id: string | null;
+  name: string;
+  type: string;
+  status: "planning" | "active" | "done";
+  messaging: string | null;
+  event_date: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A person in a campaign's funnel; their account is snapshotted for net-new detection. */
+export type CampaignMember = {
+  id: string;
+  campaign_id: string;
+  contact_id: string;
+  contact_account_id: string | null;
+  funnel_stage: "invited" | "registered" | "attended" | "engaged" | "declined" | "no_show";
+  outcome: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type FieldType =
   | "text"
   | "long_text"

@@ -17,7 +17,9 @@ import {
   WhysPanel,
 } from "../account-editor";
 import { ChallengesPanel, InitiativesPanel, ResearchDocsPanel, type ProgramOrgs, type ProgramPeople } from "./account-panels";
+import { CampaignsPanel } from "./campaigns-panel";
 import { OpportunitiesPanel } from "./opportunities-panel";
+import type { CampaignRow } from "@/app/(app)/campaigns/funnel-bits";
 
 type PersonLink = {
   initiative_id?: string;
@@ -49,7 +51,7 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
   const account = accountData as Account | null;
   if (!account) notFound();
 
-  const [accounts, orgs, fields, notes, contactRows, initiativeRows, challengeRows, accountDocRows, sellerDocRows, opportunityRows] =
+  const [accounts, orgs, fields, notes, contactRows, initiativeRows, challengeRows, accountDocRows, sellerDocRows, opportunityRows, campaignRows] =
     await Promise.all([
       listAccounts(supabase),
       listOrgs(supabase, [id]),
@@ -71,6 +73,11 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
       supabase.from("research_docs").select("*").eq("account_id", id).order("doc_type").order("title"),
       supabase.from("research_docs").select("*").eq("scope", "seller").order("title"),
       supabase.from("opportunities").select("*").eq("account_id", id).order("created_at", { ascending: false }),
+      supabase
+        .from("campaigns")
+        .select("*, accounts(id, name), campaign_members(contact_account_id, funnel_stage)")
+        .eq("account_id", id)
+        .order("created_at", { ascending: false }),
     ]);
 
   const initiatives = (initiativeRows.data ?? []) as Initiative[];
@@ -78,6 +85,7 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
   const accountDocs = (accountDocRows.data ?? []) as ResearchDoc[];
   const sellerDocs = (sellerDocRows.data ?? []) as ResearchDoc[];
   const opportunities = (opportunityRows.data ?? []) as Opportunity[];
+  const campaigns = (campaignRows.data ?? []) as unknown as CampaignRow[];
 
   // Key people and owning orgs per program, fetched once the program ids are known.
   const [initiativePeopleRows, challengePeopleRows, orgLinkRows] = await Promise.all([
@@ -190,6 +198,7 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
         >
           <TabsList>
             <TabsTrigger value="opportunities">Opportunities ({opportunities.length})</TabsTrigger>
+            <TabsTrigger value="campaigns">Campaigns ({campaigns.length})</TabsTrigger>
             <TabsTrigger value="initiatives">Initiatives ({initiatives.length})</TabsTrigger>
             <TabsTrigger value="challenges">Challenges ({challenges.length})</TabsTrigger>
             <TabsTrigger value="orgs">Orgs ({orgs.length})</TabsTrigger>
@@ -199,6 +208,9 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
           </TabsList>
           <TabsContent value="opportunities">
             <OpportunitiesPanel accountId={account.id} opportunities={opportunities} />
+          </TabsContent>
+          <TabsContent value="campaigns">
+            <CampaignsPanel accountId={account.id} campaigns={campaigns} />
           </TabsContent>
           <TabsContent value="initiatives">
             <InitiativesPanel initiatives={initiatives} people={initiativePeople} orgs={orgLinks} />

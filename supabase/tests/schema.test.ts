@@ -435,6 +435,84 @@ describe("workflow schema", () => {
   );
 });
 
+describe("campaigns schema", () => {
+  const ACCOUNT = "10000000-0000-0000-0000-000000000001";
+  const OTHER_ACCOUNT = "10000000-0000-0000-0000-000000000002";
+  const BRIAN = "30000000-0000-0000-0000-000000000001";
+  const OUTSIDER = "30000000-0000-0000-0000-000000000011";
+  const CAMP = "b0000000-0000-0000-0000-000000000001";
+  const WEBINAR = "b0000000-0000-0000-0000-000000000002";
+  const MEMBER = "b0000000-0000-0000-0000-00000000000a";
+
+  beforeAll(async () =>
+    as(USER_A, async () => {
+      await db.exec(`
+        insert into public.accounts (id, name, domain) values ('${OTHER_ACCOUNT}', 'Stripe', 'stripe.com');
+        insert into public.contacts (id, account_id, first_name, last_name, title)
+          values ('${OUTSIDER}', '${OTHER_ACCOUNT}', 'Ada', 'Lovelace', 'CTO');
+        insert into public.campaigns (id, account_id, name, type)
+          values ('${CAMP}', '${ACCOUNT}', 'Carvana exec dinner', 'event_dinner');
+        insert into public.campaign_members (id, campaign_id, contact_id, contact_account_id, funnel_stage, outcome)
+          values ('${MEMBER}', '${CAMP}', '${BRIAN}', '${ACCOUNT}', 'attended', 'wants a follow-up');
+      `);
+    }),
+  );
+
+  it("defaults to an event dinner in planning, owned by the creator", () =>
+    as(USER_A, async () => {
+      await db.exec(`insert into public.campaigns (id, name) values ('${WEBINAR}', 'Q4 webinar')`);
+      const res = await db.query<{ type: string; status: string; owner_id: string }>(
+        `select type, status, owner_id from public.campaigns where id = '${WEBINAR}'`,
+      );
+      expect(res.rows).toEqual([{ type: "event_dinner", status: "planning", owner_id: USER_A }]);
+    }),
+  );
+
+  it("enforces the type, status and funnel vocabularies and one row per member", () =>
+    as(USER_A, async () => {
+      await expect(db.exec(`insert into public.campaigns (name, type) values ('x', 'hackathon')`)).rejects.toThrow();
+      await expect(db.exec(`update public.campaigns set status = 'paused' where id = '${CAMP}'`)).rejects.toThrow();
+      await expect(
+        db.exec(`insert into public.campaign_members (campaign_id, contact_id) values ('${CAMP}', '${OUTSIDER}')`),
+      ).resolves.toBeDefined();
+      await expect(
+        db.exec(`insert into public.campaign_members (campaign_id, contact_id) values ('${CAMP}', '${BRIAN}')`),
+      ).rejects.toThrow();
+      await expect(
+        db.exec(`update public.campaign_members set funnel_stage = 'showed_up' where campaign_id = '${CAMP}'`),
+      ).rejects.toThrow();
+    }),
+  );
+
+  it("keeps the member but clears the snapshot when their account goes", () =>
+    as(USER_A, async () => {
+      await db.exec(`update public.campaign_members set contact_account_id = '${OTHER_ACCOUNT}' where id = '${MEMBER}'`);
+      await db.exec(`delete from public.accounts where id = '${OTHER_ACCOUNT}'`);
+      const res = await db.query<{ id: string; contact_account_id: string | null }>(
+        `select id, contact_account_id from public.campaign_members where id = '${MEMBER}'`,
+      );
+      expect(res.rows).toEqual([{ id: MEMBER, contact_account_id: null }]);
+    }),
+  );
+
+  it("cascades the funnel when the campaign goes", () =>
+    as(USER_A, async () => {
+      await db.exec(`delete from public.campaigns where id = '${CAMP}'`);
+      const members = await db.query(`select id from public.campaign_members where campaign_id = '${CAMP}'`);
+      expect(members.rows).toEqual([]);
+    }),
+  );
+
+  it("scopes campaigns and members to their owner", () =>
+    as(USER_B, async () => {
+      const camps = await db.query(`select id from public.campaigns`);
+      const members = await db.query(`select id from public.campaign_members`);
+      expect(camps.rows).toEqual([]);
+      expect(members.rows).toEqual([]);
+    }),
+  );
+});
+
 describe("import chunks", () => {
   const BATCH = "70000000-0000-0000-0000-000000000001";
   const ITEM_A = "70000000-0000-0000-0000-00000000000a";
