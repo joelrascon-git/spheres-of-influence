@@ -37,8 +37,7 @@ const accountPatch = z
 
 export async function updateAccount(id: string, patch: z.input<typeof accountPatch>): Promise<ActionResult> {
   const { supabase } = await requireUser();
-  const parsed = accountPatch.safeParse(patch);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid update" };
+  const parsed = accountPatch.safeParse(patch);  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid update" };
   if (parsed.data.parent_account_id === id) return { ok: false, error: "An account can't be its own parent." };
   const { error } = await supabase.from("accounts").update(parsed.data).eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -153,5 +152,21 @@ export async function deleteOrg(id: string): Promise<ActionResult> {
   if (error) return { ok: false, error: error.message };
   await logActivity(supabase, "org", id, "delete");
   revalidatePath(`/accounts/${data.account_id}`);
+  return { ok: true };
+}
+
+// ───────────────── Research documents ─────────────────
+
+/**
+ * Edits a research or knowledge-base document in place. The HTML comes from the
+ * Tiptap editor, whose schema already strips anything unsafe.
+ */
+export async function updateResearchDoc(id: string, bodyHtml: string): Promise<ActionResult> {
+  const { supabase } = await requireUser();
+  const clean = typeof bodyHtml === "string" ? bodyHtml.slice(0, 500_000) : "";
+  const { error } = await supabase.from("research_docs").update({ body_html: clean }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  await logActivity(supabase, "research_doc", id, "update", { bytes: clean.length });
+  revalidatePath("/accounts/[id]", "page");
   return { ok: true };
 }

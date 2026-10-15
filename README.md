@@ -16,10 +16,11 @@ curated influence map out.
 1. **Supabase project** — create a project named `Spheres-of-Influence` (any region).
    If the Factory Supabase connector has write access, Droid can create it and apply
    the migration for you; otherwise create it in the dashboard.
-2. **Apply the schema** — run `supabase/migrations/20261007000001_core.sql` in the
-   project's SQL editor (or `supabase link --project-ref <ref> && supabase db push`).
-   It creates every table, the boolean-search functions, triggers, RLS policies, and
-   the `avatars`/`uploads` storage buckets.
+2. **Apply the schema** — run every file in `supabase/migrations/` in order (or
+   `supabase link --project-ref <ref> && supabase db push`). They create every
+   table, the boolean-search functions, triggers, RLS policies, the
+   `avatars`/`uploads` storage buckets, ingestion and inference-undo, the
+   MEDDPICC/opportunity/task/campaign workflow tables, signals and hypotheses.
 3. **Environment** — copy `.env.local.example` to `.env.local` and fill in:
 
    | Variable | Value |
@@ -27,8 +28,10 @@ curated influence map out.
    | `NEXT_PUBLIC_SUPABASE_URL` | `https://<ref>.supabase.co` |
    | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | the project's publishable/anon key |
    | `ALLOWED_EMAILS` | comma-separated; empty allows any email (dev only) |
+   | `ANTHROPIC_API_KEY` | for ingest, signals, the signal scan and chat |
+   | `SUPABASE_SERVICE_ROLE_KEY` | optional; only for the headless seeding runner |
 
-   Later phases: `ANTHROPIC_API_KEY`, `SUMBLE_API_KEY`, `EVABOOT_API_KEY`, `MAPBOX_TOKEN`.
+   Optional integrations not required for the demo: `SUMBLE_API_KEY`, `EVABOOT_API_KEY`.
 4. **Run it**:
 
    ```bash
@@ -71,21 +74,36 @@ and everyone else is left untouched.
 
 | Path | What |
 |---|---|
-| `supabase/migrations/` | Schema: tables, search, triggers, RLS, storage |
+| `supabase/migrations/` | Schema: tables, search, triggers, RLS, storage, ingest, undo, workflow, signals |
 | `src/lib/search/` | Boolean query parser (client AST → SQL compiler) |
 | `src/lib/import/` | Evaboot row mapping, matching, diffing |
+| `src/lib/ingest/` | Transcript → notes → extraction → review queue |
+| `src/lib/inference/` | Proposal queue, apply plans, undo snapshots |
+| `src/lib/workflow/` | MEDDPICC qualification, campaigns, signals |
+| `src/lib/chat/` | The second-brain chat's read-only tools and tool loop |
+| `src/lib/research/` | The cited AmEx corpus and its idempotent migration |
 | `src/lib/tenure.ts` | Live tenure from import-time start dates |
 | `src/app/(app)/contacts/` | Search, facets, bulk actions, profiles, CSV export |
-| `src/app/(app)/accounts/` | Subsidiaries, orgs, the three whys, notes |
+| `src/app/(app)/accounts/` | Subsidiaries, orgs, the three whys, hypothesis, research |
+| `src/app/(app)/opportunities/` | Deals with the flexible MEDDPICC board and tasks |
+| `src/app/(app)/campaigns/` | Motions with member funnels and net-new flags |
+| `src/app/(app)/ingest/` | Paste a transcript; notes and extraction side by side |
+| `src/app/(app)/inferences/` | The review queue with accept, edit, bulk apply and undo |
+| `src/app/(app)/chat/` | Full-page chat; a floating dock carries it everywhere |
 | `src/app/(app)/import/` | Upload, review, apply |
-| `src/app/(app)/admin/` | Fields, picklists, style rules, prompts + models |
+| `src/app/(app)/admin/` | Fields, picklists, style rules, prompts + models, research seed |
 
 ## Phases
 
 1. **Core (done)** — schema, auth, contacts, accounts/orgs, tags, import, admin, home.
-2. Canvas (React Flow) — org charts styled by rules, influence edges.
-3. AI (Claude) + Sumble enrichment + research docs + in-app assistant.
-4. Map (Mapbox), Evaboot API direct import, Vercel deploy.
+2. **Canvas (done)** — org charts styled by rules, influence edges, reporting/influence overlays.
+3. **AI second brain (done)** — Claude-powered ingest with notes rules and the review queue
+   (with undo), opportunities with a flexible MEDDPICC board, tasks, campaigns with member
+   funnels, daily signals with a Today feed and versioned hypotheses, and the chat assistant
+   with read-only tools and citations. The cited AmEx research corpus (knowledge base, dossier,
+   org map, key contacts, initiatives, challenges) loads from Admin → Research data and stays
+   editable on the account page.
+4. Not built: direct Evaboot API import, Sumble enrichment, Mapbox geocoded maps.
 
 
 <!-- Trigger deployment -->

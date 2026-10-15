@@ -1,9 +1,7 @@
 import Link from "next/link";
-import { format, parseISO } from "date-fns";
 import { ExternalLink } from "lucide-react";
 import { ConfidenceBadge, FitBadge, ContactAvatar } from "@/components/contact-bits";
-import { RichTextView } from "@/components/rich-text";
-import { DOC_TYPES } from "@/lib/constants";
+import { ResearchDocItem } from "./research-doc-editor";
 import type { Challenge, Initiative, ResearchDoc, Source } from "@/lib/types";
 
 /** People linked to a program, keyed by program id. */
@@ -211,27 +209,6 @@ export function ChallengesPanel({
   );
 }
 
-const docTypeLabel = (t: string) => DOC_TYPES.find((d) => d.value === t)?.label ?? t;
-
-function DocItem({ doc }: { doc: ResearchDoc }) {
-  return (
-    <li>
-      <details className="rounded-lg border bg-card">
-        <summary className="flex cursor-pointer flex-wrap items-center gap-2 px-4 py-2.5 text-sm">
-          <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] text-accent-foreground">{docTypeLabel(doc.doc_type)}</span>
-          <span className="font-medium">{doc.title}</span>
-          <span className="ml-auto text-xs text-muted-foreground">
-            updated {format(parseISO(doc.updated_at), "MMM d, yyyy")}
-          </span>
-        </summary>
-        <div className="border-t px-4 py-3">
-          <RichTextView html={doc.body_html} className="text-sm" />
-        </div>
-      </details>
-    </li>
-  );
-}
-
 /** The account's research library, plus the seller-scoped documents shared by every account. */
 export function ResearchDocsPanel({ docs, sellerDocs }: { docs: ResearchDoc[]; sellerDocs: ResearchDoc[] }) {
   return (
@@ -241,7 +218,7 @@ export function ResearchDocsPanel({ docs, sellerDocs }: { docs: ResearchDoc[]; s
       ) : (
         <ul className="space-y-2">
           {docs.map((d) => (
-            <DocItem key={d.id} doc={d} />
+            <ResearchDocItem key={d.id} doc={d} />
           ))}
         </ul>
       )}
@@ -250,7 +227,7 @@ export function ResearchDocsPanel({ docs, sellerDocs }: { docs: ResearchDoc[]; s
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Seller library (all accounts)</p>
           <ul className="space-y-2">
             {sellerDocs.map((d) => (
-              <DocItem key={d.id} doc={d} />
+              <ResearchDocItem key={d.id} doc={d} />
             ))}
           </ul>
         </div>
