@@ -3,7 +3,9 @@ import { format, parseISO } from "date-fns";
 import { ArrowRight } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ContactAvatar } from "@/components/contact-bits";
+import { QuickAddTask, TaskRow } from "@/components/task-bits";
 import { requireUser } from "@/lib/auth";
+import type { Task } from "@/lib/types";
 
 function Stat({ label, value, href }: { label: string; value: number; href: string }) {
   return (
@@ -20,7 +22,7 @@ function Stat({ label, value, href }: { label: string; value: number; href: stri
 export default async function HomePage() {
   const { supabase, user } = await requireUser();
 
-  const [accounts, contacts, keyContacts, noOrg, batches, recent, activity] = await Promise.all([
+  const [accounts, contacts, keyContacts, noOrg, batches, recent, activity, openTasks, pendingInferences] = await Promise.all([
     supabase.from("accounts").select("id", { count: "exact", head: true }),
     supabase.from("contacts").select("id", { count: "exact", head: true }),
     supabase.from("contacts").select("id", { count: "exact", head: true }).eq("is_key", true),
@@ -37,7 +39,21 @@ export default async function HomePage() {
       .order("updated_at", { ascending: false })
       .limit(6),
     supabase.from("activity_log").select("entity, action, source, created_at").order("created_at", { ascending: false }).limit(10),
+    supabase
+      .from("tasks")
+      .select("id, title, due_date")
+      .eq("status", "open")
+      .order("due_date", { ascending: true, nullsFirst: false })
+      .limit(8),
+    supabase.from("inferences").select("id", { count: "exact", head: true }).eq("status", "pending"),
   ]);
+
+  const tasks = (openTasks.data ?? []) as Pick<Task, "id" | "title" | "due_date">[];
+  const dueLabel = (d: string | null) => {
+    if (!d) return null;
+    const due = parseISO(d);
+    return due < new Date() ? `overdue · ${format(due, "MMM d")}` : format(due, "MMM d");
+  };
 
   const n = (r: { count: number | null }) => r.count ?? 0;
   const totalContacts = n(contacts);
@@ -76,6 +92,29 @@ export default async function HomePage() {
 
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
+            <section className="rounded-lg border bg-card p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold">Today — tasks</h2>
+                {(pendingInferences.count ?? 0) > 0 && (
+                  <Link href="/inferences" className="text-xs text-primary hover:underline">
+                    Review queue: {pendingInferences.count} waiting
+                  </Link>
+                )}
+              </div>
+              {tasks.length === 0 ? (
+                <p className="mt-2 text-sm text-muted-foreground">No open tasks. Ingested next steps land here.</p>
+              ) : (
+                <ul className="mt-1 divide-y">
+                  {tasks.map((t) => (
+                    <TaskRow key={t.id} id={t.id} title={t.title} due={dueLabel(t.due_date)} />
+                  ))}
+                </ul>
+              )}
+              <div className="pt-2">
+                <QuickAddTask />
+              </div>
+            </section>
+
             {(batches.data ?? []).length > 0 && (
               <section className="rounded-lg border border-primary/30 bg-primary/5 p-4">
                 <h2 className="text-sm font-semibold">Imports waiting for review</h2>

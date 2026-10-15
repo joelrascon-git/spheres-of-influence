@@ -363,6 +363,78 @@ describe("ingestion schema", () => {
     }));
 });
 
+describe("workflow schema", () => {
+  const ACCOUNT = "10000000-0000-0000-0000-000000000001";
+  const BRIAN = "30000000-0000-0000-0000-000000000001";
+  const TEMPLATE = "90000000-0000-0000-0000-000000000001";
+  const OPP = "a0000000-0000-0000-0000-000000000001";
+  const ITEM = "a0000000-0000-0000-0000-00000000000a";
+
+  beforeAll(async () =>
+    as(USER_A, async () => {
+      await db.exec(`
+        insert into public.qualification_templates (id, name, elements, is_default)
+        values ('${TEMPLATE}', 'MEDDPICC',
+                '[{"key":"metrics","label":"Metrics"},{"key":"economic_buyer","label":"Economic Buyer"}]'::jsonb, true);
+        insert into public.opportunities (id, account_id, name, template_id, amount, close_date)
+        values ('${OPP}', '${ACCOUNT}', 'Factory pilot', '${TEMPLATE}', 250000, current_date + 60);
+        insert into public.qualification_items (id, opportunity_id, key, label, sort_order, status)
+        values ('${ITEM}', '${OPP}', 'metrics', 'Metrics', 0, 'identified');
+        insert into public.qualification_evidence (item_id, contact_id, note)
+        values ('${ITEM}', '${BRIAN}', 'Wants a 20% cycle-time cut by Q2.');
+        insert into public.tasks (account_id, opportunity_id, title, due_date)
+        values ('${ACCOUNT}', '${OPP}', 'Send the pilot plan', current_date + 3);
+      `);
+    }),
+  );
+
+  it("keeps element keys unique per opportunity and allows custom ones", () =>
+    as(USER_A, async () => {
+      await expect(
+        db.exec(`insert into public.qualification_items (opportunity_id, key, label) values ('${OPP}', 'metrics', 'Metrics again')`),
+      ).rejects.toThrow();
+      await expect(
+        db.exec(`insert into public.qualification_items (opportunity_id, key, label) values ('${OPP}', 'champion', 'Champion')`),
+      ).resolves.toBeDefined();
+    }),
+  );
+
+  it("enforces the status and source vocabularies", () =>
+    as(USER_A, async () => {
+      await expect(db.exec(`update public.opportunities set status = 'maybe' where id = '${OPP}'`)).rejects.toThrow();
+      await expect(
+        db.exec(`insert into public.qualification_evidence (item_id, note, source) values ('${ITEM}', 'x', 'gossip')`),
+      ).rejects.toThrow();
+      await expect(
+        db.exec(`update public.qualification_items set status = 'certain' where id = '${ITEM}'`),
+      ).rejects.toThrow();
+    }),
+  );
+
+  it("cascades items and evidence when the deal goes, and keeps tasks", () =>
+    as(USER_A, async () => {
+      await db.exec(`delete from public.opportunities where id = '${OPP}'`);
+      const items = await db.query(`select id from public.qualification_items where opportunity_id = '${OPP}'`);
+      const ev = await db.query(`select id from public.qualification_evidence where item_id = '${ITEM}'`);
+      const tasks = await db.query<{ opportunity_id: string | null }>(`select opportunity_id from public.tasks`);
+      expect(items.rows).toEqual([]);
+      expect(ev.rows).toEqual([]);
+      expect(tasks.rows).toEqual([{ opportunity_id: null }]);
+    }),
+  );
+
+  it("scopes workflow rows to their owner", () =>
+    as(USER_B, async () => {
+      const opps = await db.query(`select id from public.opportunities`);
+      const tasks = await db.query(`select id from public.tasks`);
+      const templates = await db.query(`select id from public.qualification_templates`);
+      expect(opps.rows).toEqual([]);
+      expect(tasks.rows).toEqual([]);
+      expect(templates.rows).toEqual([]);
+    }),
+  );
+});
+
 describe("import chunks", () => {
   const BATCH = "70000000-0000-0000-0000-000000000001";
   const ITEM_A = "70000000-0000-0000-0000-00000000000a";

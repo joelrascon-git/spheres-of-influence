@@ -7,6 +7,7 @@ import {
   SYSTEM_FIELDS,
 } from "@/lib/defaults";
 import { DEFAULT_STATUSES, LEGACY_PERSONAS, LEGACY_STATUSES, PERSONA_CODES } from "@/lib/constants";
+import { MEDDPICC_ELEMENTS } from "@/lib/workflow/qualify";
 
 const seeded = new Set<string>();
 
@@ -106,6 +107,19 @@ export async function ensureDefaults(supabase: SupabaseClient, userId: string) {
         onConflict: "owner_id,code",
         ignoreDuplicates: true,
       });
+  }
+
+  // ── Qualification templates (MEDDPICC is the seeded default) ────────────────
+  const { count: templateCount } = await supabase
+    .from("qualification_templates")
+    .select("id", { count: "exact", head: true });
+  if ((templateCount ?? 0) === 0) {
+    await supabase.from("qualification_templates").insert({
+      owner_id: userId,
+      name: "MEDDPICC",
+      elements: MEDDPICC_ELEMENTS,
+      is_default: true,
+    });
   }
 
   seeded.add(userId);

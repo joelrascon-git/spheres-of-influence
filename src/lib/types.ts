@@ -300,6 +300,68 @@ export type IngestDocument = {
   updated_at: string;
 };
 
+/** A saved qualification element set; MEDDPICC is the seeded default. */
+export type QualificationTemplate = {
+  id: string;
+  name: string;
+  elements: { key: string; label: string }[];
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Opportunity = {
+  id: string;
+  account_id: string;
+  name: string;
+  status: "open" | "won" | "lost" | "paused";
+  amount: number | null;
+  currency: string;
+  close_date: string | null;
+  next_step: string | null;
+  notes: string | null;
+  template_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** One element of a deal's qualification board; per-deal labels, not template-bound. */
+export type QualificationItem = {
+  id: string;
+  opportunity_id: string;
+  key: string;
+  label: string;
+  sort_order: number;
+  status: "unknown" | "identified" | "validated";
+  summary: string | null;
+  hidden: boolean;
+  created_at: string;
+};
+
+export type QualificationEvidence = {
+  id: string;
+  item_id: string;
+  contact_id: string | null;
+  note: string;
+  source: string;
+  created_at: string;
+};
+
+/** A next step or follow-up; ingest-created ones link back to their document. */
+export type Task = {
+  id: string;
+  account_id: string | null;
+  contact_id: string | null;
+  opportunity_id: string | null;
+  document_id: string | null;
+  title: string;
+  details: string | null;
+  status: "open" | "done" | "dismissed";
+  due_date: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type FieldType =
   | "text"
   | "long_text"
