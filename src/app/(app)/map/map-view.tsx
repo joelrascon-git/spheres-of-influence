@@ -83,12 +83,14 @@ export function MapView({ query, facets, people, total, error, accounts, orgs, t
       const L = (("default" in mod && mod.default ? mod.default : mod) as typeof import("leaflet"));
       if (cancelled || !hostRef.current || mapRef.current) return;
       const map = L.map(hostRef.current, { worldCopyJump: true });
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-        subdomains: "abcd",
-        maxZoom: 19,
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      // CARTO's keyless basemaps now serve an "API KEY REQUIRED" image with a 200 status;
+      // Esri's dark gray canvas is keyless and splits labels into a separate overlay.
+      const esri = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas";
+      L.tileLayer(`${esri}/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, {
+        maxZoom: 16,
+        attribution: 'Tiles &copy; <a href="https://www.esri.com">Esri</a> &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
       }).addTo(map);
+      L.tileLayer(`${esri}/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, { maxZoom: 16 }).addTo(map);
       map.setView([25, 5], 2);
       LRef.current = L;
       mapRef.current = map;
