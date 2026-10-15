@@ -56,7 +56,7 @@ export default async function CanvasPage({ searchParams }: PageProps<"/canvas">)
   const [contactRows, orgs, influenceRows, ruleRows, layoutRows] = await Promise.all([
     supabase.from("contacts").select(CONTACT_LIST_COLUMNS).in("account_id", sphereIds).order("last_name"),
     listOrgs(supabase, sphereIds),
-    supabase.from("influences").select("from_contact_id, to_contact_id, confidence, strength"),
+    supabase.from("influences").select("from_contact_id, to_contact_id, confidence, strength, evidence, source"),
     supabase.from("style_rules").select("*").order("priority", { ascending: false }),
     supabase.from("canvas_layouts").select("view, positions, added, hidden").eq("account_id", accountId),
   ]);
@@ -69,6 +69,8 @@ export default async function CanvasPage({ searchParams }: PageProps<"/canvas">)
     to_contact_id: string;
     confidence: string | null;
     strength: string | null;
+    evidence: string | null;
+    source: string;
   }[]).filter((e) => contactIds.has(e.from_contact_id) && contactIds.has(e.to_contact_id));
 
   const layouts: Record<"people" | "hierarchy", CanvasLayout> = {

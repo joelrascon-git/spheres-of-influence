@@ -33,12 +33,13 @@ import {
   DEFAULT_FILTERS,
   LINE_KINDS,
   applyCanvasFilters,
+  confidenceEdgeStyle,
   enclosingGroupSize,
   filtersActive,
+  influenceScale,
   layoutWithElk,
   matchStyleRule,
   peopleIds,
-  reportingEdgeStyle,
   reportingLineKind,
   type CanvasFilters,
   type CanvasView,
@@ -58,6 +59,8 @@ export type CanvasInfluence = {
   to_contact_id: string;
   confidence: string | null;
   strength: string | null;
+  evidence: string | null;
+  source: string;
 };
 
 type StatusDot = { label: string; color: string | null };
@@ -90,16 +93,27 @@ type CanvasProps = {
 };
 
 const CARD_W = 220;
-const CARD_H = 78;
+/** Card renders ~80px tall (p-2 + two-line title + status row); estimates match the real box. */
+const CARD_H = 80;
 const ACC_W = 230;
 const ACC_H = 84;
 const EDGE_COLOR = "#78716c";
 const INFLUENCE_COLOR = "#f59e0b";
+/** Card dimensions scale with the influence score — the influence map's "node size reflects the score". */
+const cardSize = (score: number | null) => {
+  const s = influenceScale(score);
+  return { w: Math.round(CARD_W * s), h: Math.round(CARD_H * s) };
+};
 const RELATIONSHIP_LABELS: Record<CanvasAccount["parent_relationship"], string> = {
   centralized: "Centralized procurement",
   semi_autonomous: "Semi-autonomous",
   independent: "Independent",
   unknown: "Unknown",
+};
+const SOURCE_LABELS: Record<string, string> = {
+  manual: "Added manually",
+  research: "Research",
+  ai: "AI extraction",
 };
 const LINE_LABELS: Record<LineKind, string> = {
   confirmed: "Confirmed",
@@ -115,10 +129,15 @@ function ContactNode({ data, selected }: NodeProps) {
   const d = data as CanvasNodeData;
   if (d.kind !== "contact") return null;
   const c = d.contact;
+  // Influence-map spec: node size reflects the computed score. `zoom` (not
+  // transform: scale) resizes layout itself, so measurement, handles,
+  // hit-testing and the auto-layout all stay in sync with the bigger card.
+  const s = influenceScale(c.influence_score);
   return (
     <div
       className={`group w-[220px] rounded-lg border bg-card p-2 shadow-sm transition-shadow ${selected ? "ring-2 ring-primary" : ""}`}
       style={{
+        zoom: s,
         borderColor: d.rule?.border,
         background: d.rule?.background,
         opacity: d.rule?.opacity,
@@ -137,10 +156,10 @@ function ContactNode({ data, selected }: NodeProps) {
         </div>
       </div>
       <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-        {d.statusDots.map((s) => (
-          <span key={s.label} className="flex items-center gap-0.5" title={s.label}>
-            {s.color && <span className="size-1.5 rounded-full" style={{ background: s.color }} />}
-            <span className="max-w-[80px] truncate">{s.label}</span>
+        {d.statusDots.map((sd) => (
+          <span key={sd.label} className="flex items-center gap-0.5" title={sd.label}>
+            {sd.color && <span className="size-1.5 rounded-full" style={{ background: sd.color }} />}
+            <span className="max-w-[80px] truncate">{sd.label}</span>
           </span>
         ))}
         {c.seniority_level && <span className="ml-auto shrink-0 rounded bg-accent px-1">{c.seniority_level}</span>}
@@ -221,6 +240,9 @@ function CanvasInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [collapsedOrgs, setCollapsedOrgs] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<
+    { kind: "influence"; from: string; to: string } | { kind: "reporting"; childId: string } | null
+  >(null);
   const [pendingDrop, setPendingDrop] = useState<{ childId: string; managerId: string } | null>(null);
   const [dropConfidence, setDropConfidence] = useState("medium");
   const [search, setSearch] = useState("");
@@ -304,7 +326,7 @@ function CanvasInner({
         const o = orgById.get(orgId);
         if (!o) continue;
         const size = enclosingGroupSize(
-          shown.filter((c) => c.org_id === orgId && store[c.id]).map((c) => store[c.id]),
+          shown.filter((c) => c.org_id === orgId && store[c.id]).map((c) => ({ ...store[c.id], ...cardSize(c.influence_score) })),
           { w: CARD_W, h: CARD_H },
         );
         nextNodes.push({
@@ -341,16 +363,17 @@ function CanvasInner({
           id: `report:${c.id}`,
           source: c.reports_to_id,
           target: c.id,
-          style: { stroke: EDGE_COLOR, strokeWidth: 1.5, ...reportingEdgeStyle(c.reports_to_confidence) },
+          style: { stroke: EDGE_COLOR, strokeWidth: 1.5, ...confidenceEdgeStyle(c.reports_to_confidence) },
         });
       }
       for (const e of influences) {
         if (!lineVisible("influence") || !shownIds.has(e.from_contact_id) || !shownIds.has(e.to_contact_id)) continue;
+        // Influence-map spec: solid = confirmed, dashed = inferred.
         nextEdges.push({
           id: `infl:${e.from_contact_id}:${e.to_contact_id}`,
           source: e.from_contact_id,
           target: e.to_contact_id,
-          style: { stroke: INFLUENCE_COLOR, strokeWidth: 1.5 },
+          style: { stroke: INFLUENCE_COLOR, strokeWidth: 1.5, ...confidenceEdgeStyle(e.confidence) },
           markerEnd: { type: MarkerType.ArrowClosed, color: INFLUENCE_COLOR, width: 14, height: 14 },
         });
       }
@@ -416,8 +439,10 @@ function CanvasInner({
           const shown = contacts.filter((c) => shownIds.has(c.id));
           const orgIds = [...new Set(shown.map((c) => c.org_id).filter(Boolean) as string[])];
           for (const oid of orgIds) specs.push({ id: `org:${oid}`, width: 320, height: 200, group: true });
-          for (const c of shown)
-            specs.push({ id: c.id, width: CARD_W, height: CARD_H, parentNode: c.org_id ? `org:${c.org_id}` : undefined });
+          for (const c of shown) {
+            const size = cardSize(c.influence_score);
+            specs.push({ id: c.id, width: size.w, height: size.h, parentNode: c.org_id ? `org:${c.org_id}` : undefined });
+          }
           for (const raw of shown) {
             const c = effective(raw);
             const m = c.reports_to_id;
@@ -550,6 +575,7 @@ function CanvasInner({
       positionsRef.current = { ...layouts[v].positions };
       setView(v);
       setSelectedId(null);
+      setSelectedEdge(null);
       setPendingDrop(null);
     },
     [view, doSave, layouts],
@@ -562,12 +588,26 @@ function CanvasInner({
 
   const onNodeClick = useCallback(
     (_e: unknown, node: CanvasNode) => {
+      setSelectedEdge(null);
       if (node.type === "org") toggleCollapse(node.id);
       else if (node.type === "contact") setSelectedId((cur) => (cur === node.id ? null : node.id));
       else setSelectedId(null);
     },
     [toggleCollapse],
   );
+
+  // Influence-map spec: clicking an edge shows its evidence.
+  const onEdgeClick = useCallback((_e: unknown, edge: Edge) => {
+    setSelectedId(null);
+    if (edge.id.startsWith("infl:")) {
+      const sep = edge.id.indexOf(":", 5);
+      setSelectedEdge({ kind: "influence", from: edge.id.slice(5, sep), to: edge.id.slice(sep + 1) });
+    } else if (edge.id.startsWith("report:")) {
+      setSelectedEdge({ kind: "reporting", childId: edge.id.slice(8) });
+    } else {
+      setSelectedEdge(null);
+    }
+  }, []);
 
   const onNodeDoubleClick = useCallback(
     (_e: unknown, node: CanvasNode) => {
@@ -640,6 +680,36 @@ function CanvasInner({
   }, [contacts, shownIds]);
 
   const selected = selectedId ? contactById.get(selectedId) : null;
+
+  // Evidence for the clicked line, per the influence-map spec.
+  const edgeDetail = useMemo(() => {
+    if (view !== "people" || !selectedEdge) return null;
+    if (selectedEdge.kind === "influence") {
+      const e = influences.find((i) => i.from_contact_id === selectedEdge.from && i.to_contact_id === selectedEdge.to);
+      const from = contactById.get(selectedEdge.from);
+      const to = contactById.get(selectedEdge.to);
+      if (!e || !from || !to) return null;
+      return {
+        kind: "influence" as const,
+        from: from.full_name,
+        to: to.full_name,
+        confidence: e.confidence,
+        strength: e.strength,
+        evidence: e.evidence,
+        source: e.source,
+      };
+    }
+    const child = contactById.get(selectedEdge.childId);
+    const manager = child?.reports_to_id ? contactById.get(child.reports_to_id) : null;
+    if (!child || !manager) return null;
+    return {
+      kind: "reporting" as const,
+      child: child.full_name,
+      manager: manager.full_name,
+      confidence: child.reports_to_confidence,
+      evidence: child.reports_to_evidence,
+    };
+  }, [view, selectedEdge, influences, contactById]);
   const pendingChild = pendingDrop ? contactById.get(pendingDrop.childId) : null;
   const pendingManager = pendingDrop ? contactById.get(pendingDrop.managerId) : null;
 
@@ -678,7 +748,7 @@ function CanvasInner({
           {view === "people"
             ? filtering
               ? `Showing ${shownIds.size} of ${contacts.length} people (filtered)`
-              : `${shownIds.size} on canvas · drag one onto another to set a reporting line · click an org to collapse`
+              : `${shownIds.size} on canvas · drag onto someone for a reporting line · click a line for its evidence`
             : `${accounts.length} entities`}
         </span>
         {view === "people" && (
@@ -838,6 +908,11 @@ function CanvasInner({
             onNodeDragStop={onNodeDragStop}
             onNodeClick={onNodeClick}
             onNodeDoubleClick={onNodeDoubleClick}
+            onEdgeClick={onEdgeClick}
+            onPaneClick={() => {
+              setSelectedId(null);
+              setSelectedEdge(null);
+            }}
             onDrop={onDrop}
             onDragOver={(e) => e.preventDefault()}
             colorMode="dark"
@@ -921,6 +996,44 @@ function CanvasInner({
             </div>
           )}
 
+          {/* Clicked line details */}
+          {edgeDetail && (
+            <div className="absolute bottom-3 left-3 z-10 w-72 rounded-lg border bg-card p-3 shadow-xl">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-semibold">{edgeDetail.kind === "influence" ? "Influence" : "Reporting line"}</p>
+                <button type="button" aria-label="Close line details" onClick={() => setSelectedEdge(null)} className="text-muted-foreground hover:text-foreground">
+                  <X className="size-4" />
+                </button>
+              </div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {edgeDetail.kind === "influence"
+                  ? `${edgeDetail.from} → ${edgeDetail.to}`
+                  : `${edgeDetail.child} reports to ${edgeDetail.manager}`}
+              </p>
+              <div className="mt-2 space-y-1 text-xs">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Confidence</span>
+                  <span>{CONFIDENCE.find((c) => c.value === edgeDetail.confidence)?.label ?? "Unrated"}</span>
+                </div>
+                {edgeDetail.kind === "influence" && (
+                  <>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Strength</span>
+                      <span className="capitalize">{edgeDetail.strength ?? "—"}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Source</span>
+                      <span>{SOURCE_LABELS[edgeDetail.source] ?? edgeDetail.source}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+              <p className={`mt-2 border-l-2 pl-2 text-xs italic text-muted-foreground ${edgeDetail.evidence ? "border-primary/40" : "border-transparent"}`}>
+                {edgeDetail.evidence ?? "No evidence recorded yet."}
+              </p>
+            </div>
+          )}
+
           {/* Legend */}
           {!legendOpen ? (
             <button
@@ -949,8 +1062,14 @@ function CanvasInner({
               <li><span className="mr-1 inline-block w-6 border-t border-muted-foreground align-middle" /> Reporting — confirmed</li>
               <li><span className="mr-1 inline-block w-6 border-t border-dashed border-muted-foreground align-middle" style={{ borderStyle: "dashed" }} /> Reporting — medium</li>
               <li><span className="mr-1 inline-block w-6 border-t border-muted-foreground align-middle" style={{ borderTopStyle: "dotted" }} /> Reporting — low</li>
-              <li><span className="mr-1 inline-block w-6 border-t align-middle" style={{ borderColor: INFLUENCE_COLOR }} /> Influence</li>
+              <li><span className="mr-1 inline-block w-6 border-t align-middle" style={{ borderColor: INFLUENCE_COLOR }} /> Influence — confirmed</li>
+              <li><span className="mr-1 inline-block w-6 border-t align-middle" style={{ borderColor: INFLUENCE_COLOR, borderTopStyle: "dashed" }} /> Influence — inferred</li>
             </ul>
+            )}
+            {view === "people" && (
+              <p className="mt-2 border-t pt-1.5 text-muted-foreground">
+                Card size grows with influence score. Click a line for its evidence; click an org box to collapse it.
+              </p>
             )}
             {view === "people" && statusCounts.length > 0 && (
               <>

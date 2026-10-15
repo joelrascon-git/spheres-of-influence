@@ -4,7 +4,7 @@ import type { Account, Contact, FieldDefinition, Influence, Note, Org, Tag } fro
 
 /** Columns needed to render lists and pickers; avoids pulling long profile text for 10k rows. */
 export const CONTACT_LIST_COLUMNS =
-  "id, account_id, org_id, first_name, last_name, full_name, title, headline, location, location_city, avatar_path, email, email_quality, phone, phone_quality, seniority, seniority_level, persona_status, champion_flag, can_veto, influence_score, is_key, personas, statuses, last_contacted, reports_to_id, reports_to_confidence, role_start, company_start, updated_at, linkedin_uid";
+  "id, account_id, org_id, first_name, last_name, full_name, title, headline, location, location_city, avatar_path, email, email_quality, phone, phone_quality, seniority, seniority_level, persona_status, champion_flag, can_veto, influence_score, is_key, personas, statuses, last_contacted, reports_to_id, reports_to_confidence, reports_to_evidence, role_start, company_start, updated_at, linkedin_uid";
 
 export type ContactListItem = Pick<
   Contact,
@@ -35,6 +35,7 @@ export type ContactListItem = Pick<
   | "last_contacted"
   | "reports_to_id"
   | "reports_to_confidence"
+  | "reports_to_evidence"
   | "role_start"
   | "company_start"
   | "updated_at"

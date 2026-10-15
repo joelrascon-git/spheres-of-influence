@@ -3,8 +3,10 @@ import {
   DEFAULT_FILTERS,
   EMPTY_LAYOUT,
   applyCanvasFilters,
+  confidenceEdgeStyle,
   enclosingGroupSize,
   filtersActive,
+  influenceScale,
   reportingLineKind,
   type CanvasFilters,
   defaultPeopleIds,
@@ -13,7 +15,6 @@ import {
   matchStyleRule,
   normalizeLayout,
   peopleIds,
-  reportingEdgeStyle,
   type InfluenceLink,
 } from "@/lib/canvas/graph";
 import type { Account, StyleRule } from "@/lib/types";
@@ -75,12 +76,24 @@ describe("peopleIds", () => {
   });
 });
 
-describe("reportingEdgeStyle", () => {
+describe("confidenceEdgeStyle", () => {
   it("maps confidence to the spec's line styles", () => {
-    expect(reportingEdgeStyle("confirmed").strokeDasharray).toBeUndefined();
-    expect(reportingEdgeStyle("medium")).toEqual({ strokeDasharray: "8 4" });
-    expect(reportingEdgeStyle("low")).toEqual({ strokeDasharray: "2 4" });
-    expect(reportingEdgeStyle(null)).toEqual({ strokeDasharray: "8 4" });
+    expect(confidenceEdgeStyle("confirmed").strokeDasharray).toBeUndefined();
+    expect(confidenceEdgeStyle("medium")).toEqual({ strokeDasharray: "8 4" });
+    expect(confidenceEdgeStyle("low")).toEqual({ strokeDasharray: "2 4" });
+    expect(confidenceEdgeStyle(null)).toEqual({ strokeDasharray: "8 4" });
+  });
+});
+
+describe("influenceScale", () => {
+  it("grows node size with the influence score, per the influence-map spec", () => {
+    expect(influenceScale(null)).toBe(1);
+    expect(influenceScale(0)).toBe(0.8);
+    expect(influenceScale(50)).toBeCloseTo(1.05);
+    expect(influenceScale(100)).toBe(1.3);
+    expect(influenceScale(150)).toBe(1.3);
+    expect(influenceScale(-5)).toBe(0.8);
+    expect(influenceScale(90)).toBeGreaterThan(influenceScale(40));
   });
 });
 
@@ -243,5 +256,10 @@ describe("canvas filters", () => {
   it("sizes an org box around its cards", () => {
     expect(enclosingGroupSize([], { w: 220, h: 78 })).toEqual({ w: 252, h: 130 });
     expect(enclosingGroupSize([{ x: 16, y: 36 }, { x: 256, y: 134 }], { w: 220, h: 78 })).toEqual({ w: 492, h: 228 });
+  });
+
+  it("sizes an org box around per-child cards scaled by influence", () => {
+    // A high-influence card is 1.3×: 286×101 at (16, 36).
+    expect(enclosingGroupSize([{ x: 16, y: 36, w: 286, h: 101 }], { w: 220, h: 78 })).toEqual({ w: 318, h: 153 });
   });
 });

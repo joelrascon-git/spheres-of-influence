@@ -190,21 +190,31 @@ export function applyCanvasFilters(
 
 /** Org box size that encloses its member cards (positions are relative to the box). */
 export function enclosingGroupSize(
-  children: { x: number; y: number }[],
+  children: { x: number; y: number; w?: number; h?: number }[],
   card: { w: number; h: number },
   pad = 16,
 ): { w: number; h: number } {
   let w = 252;
   let h = 130;
   for (const c of children) {
-    w = Math.max(w, c.x + card.w + pad);
-    h = Math.max(h, c.y + card.h + pad);
+    w = Math.max(w, c.x + (c.w ?? card.w) + pad);
+    h = Math.max(h, c.y + (c.h ?? card.h) + pad);
   }
   return { w, h };
 }
 
-/** Edge stroke by reporting confidence: solid = confirmed, dashed = medium, dotted = low. */
-export function reportingEdgeStyle(confidence: string | null | undefined): { strokeDasharray?: string } {
+/**
+ * Card scale by influence score — the influence-map spec says node size
+ * reflects the score. 0–100 maps to 0.8×–1.3×; unscored people stay neutral.
+ */
+export function influenceScale(score: number | null | undefined): number {
+  if (score == null) return 1;
+  const s = Math.max(0, Math.min(100, score));
+  return 0.8 + (s / 100) * 0.5;
+}
+
+/** Edge stroke by confidence: solid = confirmed, dashed = medium, dotted = low. Shared by reporting and influence lines. */
+export function confidenceEdgeStyle(confidence: string | null | undefined): { strokeDasharray?: string } {
   if (confidence === "confirmed") return {};
   if (confidence === "low") return { strokeDasharray: "2 4" };
   return { strokeDasharray: "8 4" };
