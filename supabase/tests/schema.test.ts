@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildFilter } from "@/lib/search/parse";
+import { WIPE_TABLES } from "@/lib/reset";
 
 // Minimal stand-ins for the Supabase-managed auth and storage schemas.
 const SUPABASE_STUBS = `
@@ -591,6 +592,66 @@ describe("signals schema", () => {
       const hypotheses = await db.query(`select id from public.hypotheses`);
       expect(signals.rows).toEqual([]);
       expect(hypotheses.rows).toEqual([]);
+    }),
+  );
+});
+
+describe("demo reset", () => {
+  const ACCOUNT = "10000000-0000-0000-0000-0000000000f1";
+  const PERSON_A = "30000000-0000-0000-0000-0000000000f1";
+  const PERSON_B = "30000000-0000-0000-0000-0000000000f2";
+
+  beforeAll(async () =>
+    as(USER_A, async () => {
+      await db.exec(`
+        insert into public.accounts (id, name, domain) values ('${ACCOUNT}', 'Reset Co', 'reset.example');
+        insert into public.orgs (id, account_id, name) values ('20000000-0000-0000-0000-0000000000f1', '${ACCOUNT}', 'Platform');
+        insert into public.contacts (id, account_id, org_id, first_name, last_name) values
+          ('${PERSON_A}', '${ACCOUNT}', '20000000-0000-0000-0000-0000000000f1', 'Asha', 'Patel'),
+          ('${PERSON_B}', '${ACCOUNT}', null, 'Ben', 'Orta');
+        insert into public.notes (contact_id, account_id, body_html) values ('${PERSON_A}', '${ACCOUNT}', '<p>hi</p>');
+        insert into public.influences (from_contact_id, to_contact_id, strength, evidence) values ('${PERSON_B}', '${PERSON_A}', 'high', '[]');
+        insert into public.tasks (account_id, title) values ('${ACCOUNT}', 'Reset check');
+        insert into public.campaigns (id, account_id, name) values ('d0000000-0000-0000-0000-000000000001', '${ACCOUNT}', 'Reset dinner');
+        insert into public.campaign_members (campaign_id, contact_id, contact_account_id) values ('d0000000-0000-0000-0000-000000000001', '${PERSON_A}', '${ACCOUNT}');
+        insert into public.signals (account_id, title, summary, so_what, source_name, source_url, url_hash) values ('${ACCOUNT}', 's', 's', 's', 's', 'https://reset.example/s', 'hash-r');
+        insert into public.hypotheses (account_id, content) values ('${ACCOUNT}', 'reset v1');
+        insert into public.documents (account_id, title, raw_text) values ('${ACCOUNT}', 'Transcript', 'hello');
+        insert into public.inferences (subject_type, subject_id, kind, value, confidence, evidence) values ('contact', '${PERSON_A}', 'persona', '{"personas":["CH"]}', 'inference', '[]');
+        insert into public.import_batches (file_name, status) values ('reset.csv', 'review');
+        insert into public.import_items (batch_id, row_index, action, payload) values ((select id from public.import_batches limit 1), 0, 'create', '{}'::jsonb);
+        insert into public.research_docs (scope, doc_type, title, body_html) values ('account', 'org_map', 'Reset map', '<p>map</p>');
+        insert into public.tags (name, description) values ('reset-tag', 'why');
+        insert into public.contact_tags (contact_id, tag_id) values ('${PERSON_A}', (select id from public.tags limit 1));
+      `);
+    }),
+  );
+
+  it("only names tables that exist", async () => {
+    const res = await db.query<{ table_name: string }>(`select table_name from information_schema.tables where table_schema = 'public'`);
+    const names = new Set(res.rows.map((r) => r.table_name));
+    for (const t of WIPE_TABLES) expect(names.has(t)).toBe(true);
+  });
+
+  it("wipes every root and cascades the children, in the reset order", () =>
+    as(USER_A, async () => {
+      for (const table of WIPE_TABLES) {
+        await db.exec(`delete from public.${table}`);
+      }
+      for (const t of [
+        ...WIPE_TABLES,
+        "orgs",
+        "notes",
+        "influences",
+        "campaign_members",
+        "import_items",
+        "contact_tags",
+        "contact_initiatives",
+        "contact_challenges",
+      ]) {
+        const res = await db.query<{ n: number }>(`select count(*)::int as n from public.${t}`);
+        expect(res.rows[0]?.n).toBe(0);
+      }
     }),
   );
 });

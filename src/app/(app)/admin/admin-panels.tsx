@@ -20,6 +20,7 @@ import {
   deleteFieldDef,
   deleteStyleRule,
   migrateResearchData,
+  resetWorkspaceData,
   updateFieldDef,
   updatePersonaEntry,
   updatePrompt,
@@ -582,6 +583,7 @@ const MIGRATION_LABELS: Record<string, string> = {
 function ResearchDataTab() {
   const [pending, start] = useTransition();
   const [result, setResult] = useState<ResearchMigrationResult | null>(null);
+  const [resetting, startReset] = useTransition();
 
   return (
     <div className="space-y-4">
@@ -595,7 +597,7 @@ function ResearchDataTab() {
       </p>
       <Button
         size="sm"
-        disabled={pending}
+        disabled={pending || resetting}
         onClick={() =>
           start(async () => {
             const r = await migrateResearchData();
@@ -633,6 +635,35 @@ function ResearchDataTab() {
           )}
         </div>
       )}
+
+      <div className="max-w-2xl space-y-2 rounded-lg border border-red-500/30 bg-red-500/5 p-4">
+        <h3 className="text-sm font-semibold">Demo reset</h3>
+        <p className="text-sm text-muted-foreground">
+          Wipes every workspace row — accounts, contacts, orgs, notes, proposals, tasks,
+          campaigns, signals and research — then re-seeds the research corpus. Your fields,
+          prompts, style rules and personas stay. CSV imports come back through the Import
+          page. This is the one-click way back to a clean demo.
+        </p>
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={pending || resetting}
+          onClick={() => {
+            if (!confirm("Delete ALL workspace data and re-seed the research corpus? This cannot be undone.")) return;
+            startReset(async () => {
+              const r = await resetWorkspaceData();
+              if (!r.ok) {
+                toast.error(r.error);
+                return;
+              }
+              setResult(r.data ?? null);
+              toast.success("Workspace reset and re-seeded");
+            });
+          }}
+        >
+          {resetting ? "Resetting…" : "Reset workspace data"}
+        </Button>
+      </div>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { requireUser } from "@/lib/auth";
 import { logActivity } from "@/lib/data";
 import { MODELS } from "@/lib/constants";
 import { runResearchMigration, type ResearchMigrationResult } from "@/lib/research/migrate";
+import { WIPE_TABLES } from "@/lib/reset";
 import type { ActionResult } from "@/app/(app)/contacts/actions";
 
 // ───────── Field definitions & picklists ─────────
@@ -208,6 +209,26 @@ export async function migrateResearchData(): Promise<ActionResult<ResearchMigrat
   revalidatePath("/admin");
   revalidatePath("/contacts");
   revalidatePath("/accounts");
+  return { ok: true, data: result };
+}
+
+// ───────── Demo reset ─────────
+
+/**
+ * The one-click demo reset: wipes every workspace row (accounts, contacts,
+ * orgs, notes, proposals, tasks, campaigns, signals, research) and re-seeds the
+ * cited research corpus. Field definitions, prompts, style rules and personas
+ * are configuration and survive. CSV imports come back through the Import page.
+ */
+export async function resetWorkspaceData(): Promise<ActionResult<ResearchMigrationResult>> {
+  const { supabase, user } = await requireUser();
+  for (const table of WIPE_TABLES) {
+    const { error } = await supabase.from(table).delete();
+    if (error) return { ok: false, error: `Could not clear ${table}: ${error.message}` };
+  }
+  const result = await runResearchMigration(supabase, user.id);
+  if (!result.ok) return { ok: false, error: result.error ?? "The re-seed failed after the wipe." };
+  revalidatePath("/", "layout");
   return { ok: true, data: result };
 }
 
