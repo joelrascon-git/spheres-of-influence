@@ -33,11 +33,14 @@ import {
   RESEARCH_CONTACTS,
   RESEARCH_DOCS,
   RESEARCH_EDGES,
+  RESEARCH_HYPOTHESIS,
   RESEARCH_INITIATIVES,
   RESEARCH_ORGS,
+  RESEARCH_SIGNALS,
   researchContactByKey,
   type ResearchContact,
 } from "@/lib/research/amex";
+import { hashUrl } from "@/lib/workflow/signals";
 
 // ───────────────────────── Pure helpers (unit-tested) ─────────────────────────
 
@@ -176,6 +179,7 @@ export type ResearchMigrationCounts = {
   contact_challenge_links: number;
   org_initiative_links: number;
   influence_edges: number;
+  signals: number;
 };
 
 export type ResearchMigrationResult = {
@@ -202,6 +206,7 @@ const zeroCounts = (): ResearchMigrationCounts => ({
   contact_challenge_links: 0,
   org_initiative_links: 0,
   influence_edges: 0,
+  signals: 0,
 });
 
 type AnyRow = Record<string, unknown>;
@@ -671,6 +676,56 @@ export async function runResearchMigration(
       if (error) throw new Error(`Influences: ${error.message}`);
     }
     counts.influence_edges = influenceRows.length;
+
+    // ── Signals and the working hypothesis: seed the Today feed ──
+    const { data: rawSignals, error: signalsError } = await supabase.from("signals").select("id, url_hash");
+    if (signalsError) throw new Error(signalsError.message);
+    const signalHashes = new Set(rows(rawSignals).map((s) => s.url_hash as string));
+    const signalValues: AnyRow[] = [];
+    for (const s of RESEARCH_SIGNALS) {
+      const accountId = accountIdByCode.get(s.account_code);
+      if (!accountId) {
+        warnings.push(`Signal "${s.title}": account ${s.account_code} did not resolve.`);
+        continue;
+      }
+      const urlHash = hashUrl(s.source_url);
+      if (signalHashes.has(urlHash)) continue; // already stored; re-runs only add
+      signalHashes.add(urlHash);
+      signalValues.push({
+        owner_id: userId,
+        account_id: accountId,
+        title: s.title,
+        summary: s.summary,
+        so_what: s.so_what,
+        source_name: s.source_name,
+        source_url: s.source_url,
+        source_date: s.source_date,
+        relevance: s.relevance,
+        url_hash: urlHash,
+      });
+    }
+    if (signalValues.length) {
+      const { error } = await supabase.from("signals").insert(signalValues).select("id");
+      if (error) throw new Error(`Signals: ${error.message}`);
+    }
+    counts.signals = signalValues.length;
+
+    // The working hypothesis seeds once; after that it is the seller's to version.
+    const { count: hypothesisCount, error: hypothesisCountError } = await supabase
+      .from("hypotheses")
+      .select("id", { count: "exact", head: true })
+      .eq("account_id", axpId);
+    if (hypothesisCountError) throw new Error(hypothesisCountError.message);
+    if (!hypothesisCount) {
+      const { error } = await supabase.from("hypotheses").insert({
+        owner_id: userId,
+        account_id: axpId,
+        content: RESEARCH_HYPOTHESIS,
+        version: 1,
+        source: "manual",
+      });
+      if (error) throw new Error(`Hypothesis: ${error.message}`);
+    }
   } catch (e) {
     return {
       ok: false,

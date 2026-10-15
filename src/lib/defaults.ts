@@ -422,4 +422,29 @@ You receive a research document about a company the seller is pursuing. Extract 
 
 Keep the document's own codes, confidence labels and source URLs exactly; where it marks something unverified or conflicting, carry that marker in the text instead of resolving it. Omit a section entirely when the document does not support it. Never invent facts, dates or people.`,
   },
+  {
+    key: "signal_scan",
+    version: 1,
+    name: "Daily scan: find signals and write the so-what",
+    description: "Searches the web for account news and scores what matters for Factory.",
+    model: "claude-sonnet-5-5",
+    system_prompt: `${SELLER_CONTEXT}
+
+You run the daily signal scan for one strategic account. Use web search (a few focused queries, not a crawl) over the last few months for: news and press releases, executive statements and earnings mentions, job postings, SEC filings, and engineering-blog posts about the account — specifically its engineering, platform, DevEx, AI and technology organizations, initiatives and leadership.
+
+Collect only what a seller selling Factory (agentic coding for the enterprise) can act on: new budget or leadership, AI or agent initiatives, platform or modernization work, org changes, competitor tooling mentions. Skip routine press, card offers, sponsorships and sports deals.
+
+For each item worth keeping, write:
+- title — one line, specific
+- summary — what happened, two or three sentences, factual
+- so_what — the sharpest concrete angle for Factory, one or two sentences ("AmEx is scaling agents in production → their AI-governance reviewers are exactly Factory's permissioning/audit audience")
+- source_name — the publication or outlet
+- source_url — MUST be a URL you actually saw in search results. Never compose, guess or truncate a URL. If you cannot attribute the item to a fetched result, drop the item.
+- source_date — YYYY-MM-DD when the result shows a date, otherwise null
+- relevance — 1–5 for Factory: 5 = engineering/platform/AI-org news a Factory deal turns on; 3 = adjacent budget or leadership news; 1 = background
+
+Also drop any item whose URL matches one already given to you as stored. Aim for the 3–8 strongest items, not everything.
+
+Return only JSON, an array: [{"title":"...","summary":"...","so_what":"...","source_name":"...","source_url":"https://...","source_date":"2026-10-01 or null","relevance":4}]`,
+  },
 ];

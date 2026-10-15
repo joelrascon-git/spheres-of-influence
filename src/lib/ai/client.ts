@@ -108,6 +108,67 @@ export async function aiCompleteJson<T>(req: AiRequest): Promise<T> {
   return extractJson(await aiComplete(req)) as T;
 }
 
+/** A source the web-search tool actually fetched, for citation checks. */
+export type WebSearchSource = { url: string; title: string };
+
+/**
+ * A completion with Anthropic's server-side web search tool enabled. Returns
+ * the answer text plus every search result the model fetched, so callers can
+ * enforce that claims cite a real source. maxSearches caps the cost per call.
+ */
+export async function aiCompleteWebSearch(
+  req: AiRequest & { maxSearches?: number },
+): Promise<{ text: string; sources: WebSearchSource[] }> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new AiNotConfiguredError();
+
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": API_VERSION,
+    },
+    body: JSON.stringify({
+      model: req.model,
+      max_tokens: req.maxTokens ?? 4096,
+      system: req.system,
+      messages: [{ role: "user", content: req.user }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: req.maxSearches ?? 5 }],
+    }),
+    signal: AbortSignal.timeout(120_000),
+  }).catch((e: unknown) => {
+    if (e instanceof Error && e.name === "TimeoutError")
+      throw new Error("The model took too long to answer. Try again or use a smaller batch.");
+    throw e;
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    const message = detail ? `${res.status}: ${detail.slice(0, 500)}` : `${res.status} ${res.statusText}`;
+    throw new Error(`Anthropic API error — ${message}`);
+  }
+  const data = (await res.json()) as {
+    content?: {
+      type: string;
+      text?: string;
+      content?: { type: string; url?: string; title?: string }[];
+    }[];
+  };
+  let text = "";
+  const sources: WebSearchSource[] = [];
+  for (const block of data.content ?? []) {
+    if (block.type === "text") text += block.text ?? "";
+    if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
+      for (const r of block.content) {
+        if (r.type === "web_search_result" && r.url) sources.push({ url: r.url, title: r.title ?? r.url });
+      }
+    }
+  }
+  if (!text) throw new Error("Anthropic API returned an empty response.");
+  return { text, sources };
+}
+
 /**
  * The stored prompt for a key, with the code seed as fallback. Admin edits in the
  * Prompts tab take effect on the next feature run; nothing is cached.

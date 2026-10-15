@@ -513,6 +513,88 @@ describe("campaigns schema", () => {
   );
 });
 
+describe("signals schema", () => {
+  const ACCOUNT = "10000000-0000-0000-0000-000000000001";
+  const SIGNAL = "c0000000-0000-0000-0000-000000000001";
+  const DUP_SIGNAL = "c0000000-0000-0000-0000-000000000002";
+
+  beforeAll(async () =>
+    as(USER_A, async () => {
+      await db.exec(`
+        insert into public.signals (id, account_id, title, summary, so_what, source_name, source_url, source_date, relevance, url_hash)
+        values ('${SIGNAL}', '${ACCOUNT}', 'AmEx ups tech spend', 'What happened.', 'Budget has air cover.',
+                'Payments Dive', 'https://www.paymentsdive.com/news/amex-ups-marketing-tech-spend/826146/', '2026-07-24', 3, 'hash-a');
+        insert into public.hypotheses (account_id, content, version, source)
+        values ('${ACCOUNT}', 'The bet: agents everywhere, Factory the guardrails.', 1, 'manual');
+      `);
+    }),
+  );
+
+  it("defaults to a new relevance-3 signal owned by the creator", () =>
+    as(USER_A, async () => {
+      await db.exec(`
+        insert into public.signals (id, account_id, title, summary, so_what, source_name, source_url, url_hash)
+        values ('${DUP_SIGNAL}', '${ACCOUNT}', 'x', 'y', 'z', 'w', 'https://x.example.com/a', 'hash-b')
+      `);
+      const res = await db.query<{ status: string; relevance: number; owner_id: string }>(
+        `select status, relevance, owner_id from public.signals where id = '${DUP_SIGNAL}'`,
+      );
+      expect(res.rows).toEqual([{ status: "new", relevance: 3, owner_id: USER_A }]);
+    }),
+  );
+
+  it("enforces the relevance band, the status vocabulary and url dedupe", () =>
+    as(USER_A, async () => {
+      await expect(
+        db.exec(`insert into public.signals (title, summary, so_what, source_name, source_url, relevance, url_hash)
+                 values ('x', 'y', 'z', 'w', 'https://x.example.com/b', 0, 'hash-c')`),
+      ).rejects.toThrow();
+      await expect(
+        db.exec(`insert into public.signals (title, summary, so_what, source_name, source_url, relevance, url_hash)
+                 values ('x', 'y', 'z', 'w', 'https://x.example.com/c', 6, 'hash-d')`),
+      ).rejects.toThrow();
+      await expect(db.exec(`update public.signals set status = 'read' where id = '${SIGNAL}'`)).rejects.toThrow();
+      await expect(
+        db.exec(`insert into public.signals (title, summary, so_what, source_name, source_url, url_hash)
+                 values ('x', 'y', 'z', 'w', 'https://x.example.com/a', 'hash-a')`),
+      ).rejects.toThrow(); // unique (owner_id, url_hash)
+    }),
+  );
+
+  it("versions hypotheses instead of updating them", () =>
+    as(USER_A, async () => {
+      await db.exec(`insert into public.hypotheses (account_id, content, version, source)
+                     values ('${ACCOUNT}', 'v2 with a signal folded in.', 2, 'signal')`);
+      const res = await db.query<{ version: number; source: string }>(
+        `select version, source from public.hypotheses where account_id = '${ACCOUNT}' order by version desc`,
+      );
+      expect(res.rows).toEqual([
+        { version: 2, source: "signal" },
+        { version: 1, source: "manual" },
+      ]);
+    }),
+  );
+
+  it("scopes signals and hypotheses to their owner", () =>
+    as(USER_B, async () => {
+      const signals = await db.query(`select id from public.signals`);
+      const hypotheses = await db.query(`select id from public.hypotheses`);
+      expect(signals.rows).toEqual([]);
+      expect(hypotheses.rows).toEqual([]);
+    }),
+  );
+
+  it("cascades signals and hypotheses when the account goes", () =>
+    as(USER_A, async () => {
+      await db.exec(`delete from public.accounts where id = '${ACCOUNT}'`);
+      const signals = await db.query(`select id from public.signals`);
+      const hypotheses = await db.query(`select id from public.hypotheses`);
+      expect(signals.rows).toEqual([]);
+      expect(hypotheses.rows).toEqual([]);
+    }),
+  );
+});
+
 describe("import chunks", () => {
   const BATCH = "70000000-0000-0000-0000-000000000001";
   const ITEM_A = "70000000-0000-0000-0000-00000000000a";

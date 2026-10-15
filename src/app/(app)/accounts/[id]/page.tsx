@@ -18,8 +18,11 @@ import {
 } from "../account-editor";
 import { ChallengesPanel, InitiativesPanel, ResearchDocsPanel, type ProgramOrgs, type ProgramPeople } from "./account-panels";
 import { CampaignsPanel } from "./campaigns-panel";
+import { HypothesisPanel } from "./hypothesis-panel";
 import { OpportunitiesPanel } from "./opportunities-panel";
+import { SignalsPanel } from "./signals-panel";
 import type { CampaignRow } from "@/app/(app)/campaigns/funnel-bits";
+import type { Hypothesis, Signal } from "@/lib/types";
 
 type PersonLink = {
   initiative_id?: string;
@@ -51,7 +54,7 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
   const account = accountData as Account | null;
   if (!account) notFound();
 
-  const [accounts, orgs, fields, notes, contactRows, initiativeRows, challengeRows, accountDocRows, sellerDocRows, opportunityRows, campaignRows] =
+  const [accounts, orgs, fields, notes, contactRows, initiativeRows, challengeRows, accountDocRows, sellerDocRows, opportunityRows, campaignRows, signalRows, hypothesisRows] =
     await Promise.all([
       listAccounts(supabase),
       listOrgs(supabase, [id]),
@@ -78,6 +81,8 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
         .select("*, accounts(id, name), campaign_members(contact_account_id, funnel_stage)")
         .eq("account_id", id)
         .order("created_at", { ascending: false }),
+      supabase.from("signals").select("*").eq("account_id", id).order("created_at", { ascending: false }).limit(100),
+      supabase.from("hypotheses").select("*").eq("account_id", id).order("version", { ascending: false }).limit(1),
     ]);
 
   const initiatives = (initiativeRows.data ?? []) as Initiative[];
@@ -86,6 +91,8 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
   const sellerDocs = (sellerDocRows.data ?? []) as ResearchDoc[];
   const opportunities = (opportunityRows.data ?? []) as Opportunity[];
   const campaigns = (campaignRows.data ?? []) as unknown as CampaignRow[];
+  const signals = (signalRows.data ?? []) as Signal[];
+  const hypothesis = ((hypothesisRows.data ?? [])[0] ?? null) as Hypothesis | null;
 
   // Key people and owning orgs per program, fetched once the program ids are known.
   const [initiativePeopleRows, challengePeopleRows, orgLinkRows] = await Promise.all([
@@ -199,6 +206,7 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
           <TabsList>
             <TabsTrigger value="opportunities">Opportunities ({opportunities.length})</TabsTrigger>
             <TabsTrigger value="campaigns">Campaigns ({campaigns.length})</TabsTrigger>
+            <TabsTrigger value="signals">Signals ({signals.length})</TabsTrigger>
             <TabsTrigger value="initiatives">Initiatives ({initiatives.length})</TabsTrigger>
             <TabsTrigger value="challenges">Challenges ({challenges.length})</TabsTrigger>
             <TabsTrigger value="orgs">Orgs ({orgs.length})</TabsTrigger>
@@ -211,6 +219,9 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
           </TabsContent>
           <TabsContent value="campaigns">
             <CampaignsPanel accountId={account.id} campaigns={campaigns} />
+          </TabsContent>
+          <TabsContent value="signals">
+            <SignalsPanel accountId={account.id} signals={signals} />
           </TabsContent>
           <TabsContent value="initiatives">
             <InitiativesPanel initiatives={initiatives} people={initiativePeople} orgs={orgLinks} />
@@ -233,6 +244,7 @@ export default async function AccountPage({ params }: PageProps<"/accounts/[id]"
         </Tabs>
 
         <div className="space-y-4">
+          <HypothesisPanel accountId={account.id} hypothesis={hypothesis} />
           <WhysPanel account={account} />
           <AccountFactsPanel account={account} fields={fields} />
         </div>

@@ -3741,3 +3741,105 @@ export const PRIMARY_ACCOUNT_CODE = "AXP";
 export const EB_CONTACT_KEY = "ravi-radhakrishnan";
 
 export const researchContactByKey = (key: string) => RESEARCH_CONTACTS.find((c) => c.key === key);
+
+// ───────────────────────────── Signals ─────────────────────────────
+// The Today feed's starting stock: events from the corpus's own sourced
+// claims, each with the so-what line already written. The daily scan adds to
+// these; it never replaces them.
+
+export type ResearchSignal = {
+  account_code: string;
+  title: string;
+  summary: string;
+  so_what: string;
+  source_name: string;
+  source_url: string;
+  source_date: string | null;
+  relevance: number;
+};
+
+export const RESEARCH_SIGNALS: ResearchSignal[] = [
+  {
+    account_code: "AXP",
+    title: "AmEx engineering blog: \"Reimagining Software Delivery with AI\"",
+    summary:
+      "American Express's technology organization published a first-person account of rethinking how software is delivered with AI, describing agent-assisted development across the platform.",
+    so_what:
+      "ETS is publicly rethinking software delivery with AI — this is Factory's exact thesis, and the named engineering leaders are warm entry points for a platform conversation.",
+    source_name: "American Express Engineering (americanexpress.io)",
+    source_url: "https://americanexpress.io/reimagining-software-delivery-with-ai/",
+    source_date: null,
+    relevance: 5,
+  },
+  {
+    account_code: "AXP",
+    title: "AmEx debuts agentic-commerce experiences and the ACE Developer Kit",
+    summary:
+      "AmEx announced agentic-commerce experiences (ACE) with a developer kit, letting merchants build AI agents that transact through AmEx rails, and an Anthropic partnership making Resy restaurant bookings conversational.",
+    so_what:
+      "They are already shipping agents with Anthropic — the AI-governance and security reviewers who approved that stack are exactly the audience for Factory's permissioning and audit controls.",
+    source_name: "AmEx newsroom",
+    source_url: "https://www.americanexpress.com/en-us/newsroom/articles/innovation/american-express-debuts-agentic-commerce-experiences--ace--devel.html",
+    source_date: null,
+    relevance: 5,
+  },
+  {
+    account_code: "AXP",
+    title: "AmEx acquires Hyper to power AI and expense-management offerings",
+    summary:
+      "AmEx acquired Hyper (agentic expense management) to embed agents into its commercial product line, part of the biggest software expansion in the account.",
+    so_what:
+      "Build-vs-buy pressure is peaking: a bought expense-agent stack doesn't cover engineering's internal agents, and Factory lands where they're choosing what to build.",
+    source_name: "PYMNTS",
+    source_url: "https://www.pymnts.com/partnerships/2026/amex-acquires-hyper-to-boost-ai-and-expense-management-offerings/",
+    source_date: "2026-04-16",
+    relevance: 3,
+  },
+  {
+    account_code: "AXP",
+    title: "Next generation of Amex Corporate launches with integrated expense software",
+    summary:
+      "The next-gen Amex Corporate launched with the Corporate Cashback Card, integrated Expense Management software and the Amex Expense app, with expense and insights agents due in the fall, then AP software.",
+    so_what:
+      "Every new commercial product now assumes an agent layer — engineering teams inside ETS feel the same mandate, and Factory is how they deliver it safely.",
+    source_name: "AmEx newsroom",
+    source_url: "https://www.americanexpress.com/en-us/newsroom/articles/amex-for-business/american-express-delivers-the-next-generation-of-amex-corporate-.html",
+    source_date: "2026-09-30",
+    relevance: 4,
+  },
+  {
+    account_code: "AXP",
+    title: "VentureBeat: AI cut Amex IT escalations 40%",
+    summary:
+      "AmEx reported using AI for a 40% reduction in IT escalations and an 85% boost in travel assistance, held up as an efficiency proof point.",
+    so_what:
+      "Quantified efficiency claims set the bar any Factory pilot must beat — lead with measured cycle-time and MTTR cuts, not promises.",
+    source_name: "VentureBeat",
+    source_url: "https://venturebeat.com/technology/how-amex-uses-ai-to-increase-efficiency-40-fewer-it-escalations-85-travel-assistance-boost",
+    source_date: null,
+    relevance: 4,
+  },
+  {
+    account_code: "AXP",
+    title: "Q2 2026: AmEx ups marketing and technology spend",
+    summary:
+      "On the Q2 2026 earnings call AmEx guided marketing and technology spend up, with the increment aimed at commercial product expansion.",
+    so_what:
+      "Tech budget has explicit air cover this cycle — discretionary engineering-productivity spend is fundable now, not next year.",
+    source_name: "Payments Dive",
+    source_url: "https://www.paymentsdive.com/news/amex-ups-marketing-tech-spend/826146/",
+    source_date: null,
+    relevance: 3,
+  },
+];
+
+/** The working hypothesis, seeded as version 1. Faithful to the corpus's own synthesis. */
+export const RESEARCH_HYPOTHESIS = `## Working hypothesis (v1, from research)
+
+**The bet:** AmEx is scaling AI agents across its commercial products (Hyper, ACE, expense and insights agents) while ETS publicly reimagines software delivery with AI. The agentic layer for engineering is contestable — the only publicly confirmed AI coding vendor is GitHub Copilot, and which agentic tool(s) are being scaled is undisclosed.
+
+**The wedge:** AmEx's AI-governance and security reviewers expect execution-time controls on agents (their own guardrails post signals it). Factory's permissioning, audit and analytics speak that language from the first demo.
+
+**The path:** land with ETS and DevEx leaders named in the engineering-blog posts, run a pilot against a measured cycle-time or MTTR cut (they hold themselves to quantified efficiency wins), then let the AITO's measurement mandate carry Factory into the platform standard.
+
+**Watch out:** a possible OpenAI/ChatGPT Business footprint (a $300 per-seat credit ships with the next-gen corporate products) and incumbent GitHub relationships inside engineering.`;

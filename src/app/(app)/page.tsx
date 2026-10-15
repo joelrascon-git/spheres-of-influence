@@ -4,8 +4,9 @@ import { ArrowRight } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ContactAvatar } from "@/components/contact-bits";
 import { QuickAddTask, TaskRow } from "@/components/task-bits";
+import { SignalCard } from "@/components/signal-bits";
 import { requireUser } from "@/lib/auth";
-import type { Task } from "@/lib/types";
+import type { Signal, Task } from "@/lib/types";
 
 function Stat({ label, value, href }: { label: string; value: number; href: string }) {
   return (
@@ -22,7 +23,7 @@ function Stat({ label, value, href }: { label: string; value: number; href: stri
 export default async function HomePage() {
   const { supabase, user } = await requireUser();
 
-  const [accounts, contacts, keyContacts, noOrg, batches, recent, activity, openTasks, pendingInferences] = await Promise.all([
+  const [accounts, contacts, keyContacts, noOrg, batches, recent, activity, openTasks, pendingInferences, signalRows] = await Promise.all([
     supabase.from("accounts").select("id", { count: "exact", head: true }),
     supabase.from("contacts").select("id", { count: "exact", head: true }),
     supabase.from("contacts").select("id", { count: "exact", head: true }).eq("is_key", true),
@@ -46,9 +47,17 @@ export default async function HomePage() {
       .order("due_date", { ascending: true, nullsFirst: false })
       .limit(8),
     supabase.from("inferences").select("id", { count: "exact", head: true }).eq("status", "pending"),
+    supabase
+      .from("signals")
+      .select("*, accounts(id, name)")
+      .eq("status", "new")
+      .order("relevance", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(10),
   ]);
 
   const tasks = (openTasks.data ?? []) as Pick<Task, "id" | "title" | "due_date">[];
+  const signals = (signalRows.data ?? []) as unknown as (Signal & { accounts: { id: string; name: string } | null })[];
   const dueLabel = (d: string | null) => {
     if (!d) return null;
     const due = parseISO(d);
@@ -92,6 +101,20 @@ export default async function HomePage() {
 
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
+            {signals.length > 0 && (
+              <section className="rounded-lg border bg-card p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">Today — new signals</h2>
+                  <span className="text-xs text-muted-foreground">Link them, fold them into the hypothesis, make them a task, or dismiss.</span>
+                </div>
+                <ul className="mt-1 divide-y">
+                  {signals.map((s) => (
+                    <SignalCard key={s.id} signal={s} account={s.accounts ? { id: s.accounts.id, name: s.accounts.name } : null} />
+                  ))}
+                </ul>
+              </section>
+            )}
+
             <section className="rounded-lg border bg-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold">Today — tasks</h2>

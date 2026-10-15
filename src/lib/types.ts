@@ -388,6 +388,33 @@ export type CampaignMember = {
   updated_at: string;
 };
 
+/** Something that happened in or near the account, with the Factory angle written. */
+export type Signal = {
+  id: string;
+  account_id: string | null;
+  title: string;
+  summary: string;
+  so_what: string;
+  source_name: string;
+  source_url: string;
+  source_date: string | null;
+  relevance: number;
+  status: "new" | "linked" | "dismissed";
+  url_hash: string;
+  created_at: string;
+  updated_at: string;
+};
+
+/** The account's working hypothesis; every save is a new versioned row. */
+export type Hypothesis = {
+  id: string;
+  account_id: string;
+  content: string;
+  version: number;
+  source: "manual" | "signal";
+  created_at: string;
+};
+
 export type FieldType =
   | "text"
   | "long_text"
